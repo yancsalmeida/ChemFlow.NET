@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{AB858520-E231-49C8-9F9C-92AEBA625EE3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChemFlow.Domain", "src\ChemFlow.Domain\ChemFlow.Domain.csproj", "{BD4EE2DB-E4CC-43D1-AD6D-BB02268B4A79}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{D656B234-6BC8-4596-8E20-E608A608A6FF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChemFlow.Tests", "tests\ChemFlow.Tests\ChemFlow.Tests.csproj", "{EC92E4DF-ED40-4D29-BA68-70DF20381D89}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChemFlow.Infrastructure", "src\ChemFlow.Infrastructure\ChemFlow.Infrastructure.csproj", "{BEDBD3CA-C768-480B-A883-9AD7108E0DF8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChemFlow.Api", "src\ChemFlow.Api\ChemFlow.Api.csproj", "{7027FE7A-1BF8-4A15-802B-2A58E39D4D03}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BD4EE2DB-E4CC-43D1-AD6D-BB02268B4A79}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BD4EE2DB-E4CC-43D1-AD6D-BB02268B4A79}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BD4EE2DB-E4CC-43D1-AD6D-BB02268B4A79}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BD4EE2DB-E4CC-43D1-AD6D-BB02268B4A79}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EC92E4DF-ED40-4D29-BA68-70DF20381D89}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EC92E4DF-ED40-4D29-BA68-70DF20381D89}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EC92E4DF-ED40-4D29-BA68-70DF20381D89}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EC92E4DF-ED40-4D29-BA68-70DF20381D89}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BEDBD3CA-C768-480B-A883-9AD7108E0DF8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BEDBD3CA-C768-480B-A883-9AD7108E0DF8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BEDBD3CA-C768-480B-A883-9AD7108E0DF8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BEDBD3CA-C768-480B-A883-9AD7108E0DF8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7027FE7A-1BF8-4A15-802B-2A58E39D4D03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7027FE7A-1BF8-4A15-802B-2A58E39D4D03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7027FE7A-1BF8-4A15-802B-2A58E39D4D03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7027FE7A-1BF8-4A15-802B-2A58E39D4D03}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{BD4EE2DB-E4CC-43D1-AD6D-BB02268B4A79} = {AB858520-E231-49C8-9F9C-92AEBA625EE3}
+		{EC92E4DF-ED40-4D29-BA68-70DF20381D89} = {D656B234-6BC8-4596-8E20-E608A608A6FF}
+		{BEDBD3CA-C768-480B-A883-9AD7108E0DF8} = {AB858520-E231-49C8-9F9C-92AEBA625EE3}
+		{7027FE7A-1BF8-4A15-802B-2A58E39D4D03} = {AB858520-E231-49C8-9F9C-92AEBA625EE3}
+	EndGlobalSection
+EndGlobal
