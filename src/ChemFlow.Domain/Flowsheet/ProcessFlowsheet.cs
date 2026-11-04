@@ -173,4 +173,480 @@ public sealed class ProcessFlowsheet
 
         return executionOrder;
     }
+
+    /// <summary>
+    /// Exports the structural topology of the flowsheet, including units, streams, connectivity, and Graphviz DOT.
+    /// </summary>
+    public FlowsheetTopology GetTopology()
+    {
+        var producerByStreamId = new Dictionary<string, IUnitOperation>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream outlet in unit.OutletStreams)
+            {
+                producerByStreamId[outlet.Id] = unit;
+            }
+        }
+
+        var consumersByStreamId = new Dictionary<string, List<IUnitOperation>>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream inlet in unit.InletStreams)
+            {
+                if (!consumersByStreamId.TryGetValue(inlet.Id, out var list))
+                {
+                    list = [];
+                    consumersByStreamId[inlet.Id] = list;
+                }
+                list.Add(unit);
+            }
+        }
+
+        var adjacencyList = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            var downstreamUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (MaterialStream outlet in unit.OutletStreams)
+            {
+                if (consumersByStreamId.TryGetValue(outlet.Id, out var targets))
+                {
+                    foreach (var target in targets)
+                        downstreamUnits.Add(target.Id);
+                }
+            }
+            adjacencyList[unit.Id] = downstreamUnits.ToList();
+        }
+
+        bool isAcyclic = true;
+        IReadOnlyList<string> executionOrder = [];
+        try
+        {
+            executionOrder = GetTopologicalExecutionOrder().Select(u => u.Id).ToList();
+        }
+        catch (InvalidOperationException)
+        {
+            isAcyclic = false;
+        }
+
+        var unitNodes = _units.Values.Select(u => new UnitTopologyNode(
+            Id: u.Id,
+            Name: u.Name,
+            UnitType: u.UnitType,
+            InletStreamIds: u.InletStreams.Select(s => s.Id).ToList(),
+            OutletStreamIds: u.OutletStreams.Select(s => s.Id).ToList(),
+            EnergyDutyWatts: u.EnergyDutyWatts
+        )).ToList();
+
+        var streamEdges = _streams.Values.Select(s =>
+        {
+            producerByStreamId.TryGetValue(s.Id, out IUnitOperation? sourceUnit);
+            consumersByStreamId.TryGetValue(s.Id, out List<IUnitOperation>? targets);
+
+            bool isFeed = sourceUnit is null;
+            bool isProduct = targets is null || targets.Count == 0;
+            string? targetUnitId = targets is not null && targets.Count > 0
+                ? string.Join(", ", targets.Select(t => t.Id))
+                : null;
+
+            var compositionDict = new Dictionary<string, double>();
+            for (int i = 0; i < s.Compounds.Count; i++)
+                compositionDict[s.Compounds[i].Id] = Math.Round(s.CompositionZ[i], 6);
+
+            return new StreamTopologyEdge(
+                StreamId: s.Id,
+                StreamName: s.Name,
+                SourceUnitId: sourceUnit?.Id,
+                TargetUnitId: targetUnitId,
+                IsExternalFeed: isFeed,
+                IsFinalProduct: isProduct,
+                MolarFlowMolPerSec: s.MolarFlowRateMolPerSec,
+                MassFlowKgPerSec: s.MassFlowRateKgPerSec,
+                TemperatureKelvin: s.TemperatureKelvin,
+                PressureKpa: s.PressureKpa,
+                Phase: s.IsSolved ? s.Phase.ToString() : "Unsolved",
+                VaporFractionBeta: s.IsSolved ? s.VaporFractionBeta : 0.0,
+                TotalEnthalpyFlowWatts: s.IsSolved ? s.TotalEnthalpyFlowWatts : 0.0,
+                Composition: compositionDict
+            );
+        }).ToList();
+
+        string dotGraph = ToDot();
+
+        return new FlowsheetTopology(
+            FlowsheetName: Name,
+            Units: unitNodes,
+            Streams: streamEdges,
+            AdjacencyList: adjacencyList,
+            ExecutionOrder: executionOrder,
+            IsAcyclic: isAcyclic,
+            DotGraph: dotGraph
+        );
+    }
+
+    /// <summary>
+    /// Generates a Graphviz DOT representation of the flowsheet graph with equipment blocks as styled nodes
+    /// and streams as directed edges with flow and thermal state labels.
+    /// </summary>
+    public string ToDot()
+    {
+        var producerByStreamId = new Dictionary<string, IUnitOperation>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream outlet in unit.OutletStreams)
+            {
+                producerByStreamId[outlet.Id] = unit;
+            }
+        }
+
+        var consumersByStreamId = new Dictionary<string, List<IUnitOperation>>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream inlet in unit.InletStreams)
+            {
+                if (!consumersByStreamId.TryGetValue(inlet.Id, out var list))
+                {
+                    list = [];
+                    consumersByStreamId[inlet.Id] = list;
+                }
+                list.Add(unit);
+            }
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"digraph \"{EscapeDot(Name)}\" {{");
+        sb.AppendLine("    rankdir=LR;");
+        sb.AppendLine("    splines=ortho;");
+        sb.AppendLine("    nodesep=0.6;");
+        sb.AppendLine("    ranksep=0.8;");
+        sb.AppendLine("    node [fontname=\"Helvetica,Arial,sans-serif\", fontsize=10];");
+        sb.AppendLine("    edge [fontname=\"Helvetica,Arial,sans-serif\", fontsize=8];");
+        sb.AppendLine();
+
+        // Feed nodes subgraph
+        var feedStreams = _streams.Values.Where(s => !producerByStreamId.ContainsKey(s.Id)).ToList();
+        if (feedStreams.Count > 0)
+        {
+            sb.AppendLine("    // External Feed Boundaries");
+            sb.AppendLine("    subgraph cluster_feeds {");
+            sb.AppendLine("        label=\"Plant Feeds\";");
+            sb.AppendLine("        style=\"dashed,rounded\";");
+            sb.AppendLine("        color=\"#94A3B8\";");
+            sb.AppendLine("        fontcolor=\"#64748B\";");
+            sb.AppendLine("        fontsize=9;");
+            foreach (var feed in feedStreams)
+            {
+                string nodeId = $"feed_{SanitizeDotId(feed.Id)}";
+                string label = $"{EscapeDot(feed.Name)}\\n[F = {feed.MolarFlowRateMolPerSec:F2} mol/s | T = {feed.TemperatureKelvin:F1} K]";
+                sb.AppendLine($"        \"{nodeId}\" [label=\"{label}\", shape=ellipse, style=filled, fillcolor=\"#E0F2FE\", color=\"#0284C7\", fontcolor=\"#0369A1\"];");
+            }
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
+
+        // Equipment unit operations
+        sb.AppendLine("    // Equipment Operations");
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            string unitNodeId = SanitizeDotId(unit.Id);
+            var (fillColor, strokeColor) = unit.UnitType switch
+            {
+                "Mixer" => ("#FEF3C7", "#D97706"),
+                "HeaterCooler" => ("#FFEDD5", "#EA580C"),
+                "FlashDrum" => ("#F3E8FF", "#9333EA"),
+                "ConversionReactor" => ("#FCE7F3", "#DB2777"),
+                _ => ("#F1F5F9", "#475569")
+            };
+
+            double dutyKw = unit.EnergyDutyWatts / 1000.0;
+            string dutyStr = Math.Abs(dutyKw) > 1e-3 ? $" | Q = {dutyKw:F2} kW" : "";
+            string recordLabel = $"{{{unit.Id} ({EscapeDot(unit.Name)})|{unit.UnitType}{dutyStr}}}";
+
+            sb.AppendLine($"    \"{unitNodeId}\" [label=\"{recordLabel}\", shape=record, style=\"filled,rounded\", fillcolor=\"{fillColor}\", color=\"{strokeColor}\", penwidth=1.5];");
+        }
+        sb.AppendLine();
+
+        // Product nodes subgraph
+        var productStreams = _streams.Values.Where(s => producerByStreamId.ContainsKey(s.Id) && (!consumersByStreamId.ContainsKey(s.Id) || consumersByStreamId[s.Id].Count == 0)).ToList();
+        if (productStreams.Count > 0)
+        {
+            sb.AppendLine("    // External Product Boundaries");
+            sb.AppendLine("    subgraph cluster_products {");
+            sb.AppendLine("        label=\"Plant Products\";");
+            sb.AppendLine("        style=\"dashed,rounded\";");
+            sb.AppendLine("        color=\"#94A3B8\";");
+            sb.AppendLine("        fontcolor=\"#64748B\";");
+            sb.AppendLine("        fontsize=9;");
+            foreach (var prod in productStreams)
+            {
+                string nodeId = $"prod_{SanitizeDotId(prod.Id)}";
+                string phaseStr = prod.IsSolved ? prod.Phase.ToString() : "Stream";
+                string label = $"{EscapeDot(prod.Name)}\\n[F = {prod.MolarFlowRateMolPerSec:F2} mol/s | {phaseStr}]";
+                sb.AppendLine($"        \"{nodeId}\" [label=\"{label}\", shape=ellipse, style=filled, fillcolor=\"#DCFCE7\", color=\"#16A34A\", fontcolor=\"#15803D\"];");
+            }
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
+
+        // Stream Edges
+        sb.AppendLine("    // Material Stream Connectivity");
+        foreach (MaterialStream stream in _streams.Values)
+        {
+            producerByStreamId.TryGetValue(stream.Id, out IUnitOperation? sourceUnit);
+            consumersByStreamId.TryGetValue(stream.Id, out List<IUnitOperation>? targetUnits);
+
+            string edgeLabel = $"{stream.Id}\\n{stream.MolarFlowRateMolPerSec:F1} mol/s";
+            if (stream.IsSolved)
+                edgeLabel += $"\\n{stream.TemperatureKelvin:F1} K";
+
+            if (sourceUnit is null)
+            {
+                string feedNodeId = $"feed_{SanitizeDotId(stream.Id)}";
+                if (targetUnits is not null)
+                {
+                    foreach (var target in targetUnits)
+                    {
+                        sb.AppendLine($"    \"{feedNodeId}\" -> \"{SanitizeDotId(target.Id)}\" [label=\"{edgeLabel}\", color=\"#0284C7\"];");
+                    }
+                }
+            }
+            else if (targetUnits is null || targetUnits.Count == 0)
+            {
+                string prodNodeId = $"prod_{SanitizeDotId(stream.Id)}";
+                sb.AppendLine($"    \"{SanitizeDotId(sourceUnit.Id)}\" -> \"{prodNodeId}\" [label=\"{edgeLabel}\", color=\"#16A34A\"];");
+            }
+            else
+            {
+                foreach (var target in targetUnits)
+                {
+                    sb.AppendLine($"    \"{SanitizeDotId(sourceUnit.Id)}\" -> \"{SanitizeDotId(target.Id)}\" [label=\"{edgeLabel}\", color=\"#475569\"];");
+                }
+            }
+        }
+
+        sb.AppendLine("}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Generates a comprehensive mass and energy balance report verifying overall conservation across
+    /// the flowsheet boundary, component species conservation, and local equipment balance closure.
+    /// </summary>
+    public FlowsheetBalanceReport GenerateBalanceReport()
+    {
+        var producerByStreamId = new Dictionary<string, IUnitOperation>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream outlet in unit.OutletStreams)
+            {
+                producerByStreamId[outlet.Id] = unit;
+            }
+        }
+
+        var consumersByStreamId = new Dictionary<string, List<IUnitOperation>>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream inlet in unit.InletStreams)
+            {
+                if (!consumersByStreamId.TryGetValue(inlet.Id, out var list))
+                {
+                    list = [];
+                    consumersByStreamId[inlet.Id] = list;
+                }
+                list.Add(unit);
+            }
+        }
+
+        var externalFeeds = _streams.Values
+            .Where(s => !producerByStreamId.ContainsKey(s.Id))
+            .ToList();
+
+        var finalProducts = _streams.Values
+            .Where(s => producerByStreamId.ContainsKey(s.Id) && (!consumersByStreamId.ContainsKey(s.Id) || consumersByStreamId[s.Id].Count == 0))
+            .ToList();
+
+        // 1. Global Mass and Molar Flow Balances
+        double totalFeedMolarFlow = externalFeeds.Sum(s => s.MolarFlowRateMolPerSec);
+        double totalProductMolarFlow = finalProducts.Sum(s => s.MolarFlowRateMolPerSec);
+        double molarDelta = totalFeedMolarFlow - totalProductMolarFlow;
+        double relativeMolarError = totalFeedMolarFlow > 1e-12 ? Math.Abs(molarDelta) / totalFeedMolarFlow : 0.0;
+
+        double totalFeedMassFlow = externalFeeds.Sum(s => s.MassFlowRateKgPerSec);
+        double totalProductMassFlow = finalProducts.Sum(s => s.MassFlowRateKgPerSec);
+        double massDelta = totalFeedMassFlow - totalProductMassFlow;
+        double relativeMassError = totalFeedMassFlow > 1e-12 ? Math.Abs(massDelta) / totalFeedMassFlow : 0.0;
+        bool isGlobalMassBalanced = relativeMassError < 1e-5 || Math.Abs(massDelta) < 1e-6;
+
+        // 2. Global Energy Balance
+        double totalFeedEnthalpy = externalFeeds.Sum(s => s.TotalEnthalpyFlowWatts);
+        double totalProductEnthalpy = finalProducts.Sum(s => s.TotalEnthalpyFlowWatts);
+        double totalDutyAdded = _units.Values.Sum(u => u.EnergyDutyWatts);
+        double enthalpyDelta = (totalFeedEnthalpy + totalDutyAdded) - totalProductEnthalpy;
+        double energyScale = Math.Abs(totalFeedEnthalpy) + Math.Abs(totalDutyAdded) + Math.Abs(totalProductEnthalpy);
+        double relativeEnthalpyError = energyScale > 1e-6 ? Math.Abs(enthalpyDelta) / energyScale : 0.0;
+        bool isGlobalEnergyBalanced = relativeEnthalpyError < 1e-4 || Math.Abs(enthalpyDelta) < 1.0;
+
+        var globalSummary = new GlobalBalanceSummary(
+            TotalFeedMolarFlowMolPerSec: totalFeedMolarFlow,
+            TotalProductMolarFlowMolPerSec: totalProductMolarFlow,
+            MolarFlowDeltaMolPerSec: molarDelta,
+            RelativeMolarError: relativeMolarError,
+            TotalFeedMassFlowKgPerSec: totalFeedMassFlow,
+            TotalProductMassFlowKgPerSec: totalProductMassFlow,
+            MassFlowDeltaKgPerSec: massDelta,
+            RelativeMassError: relativeMassError,
+            TotalFeedEnthalpyWatts: totalFeedEnthalpy,
+            TotalProductEnthalpyWatts: totalProductEnthalpy,
+            TotalHeatDutyAddedWatts: totalDutyAdded,
+            EnthalpyDeltaWatts: enthalpyDelta,
+            RelativeEnthalpyError: relativeEnthalpyError,
+            IsMassBalanced: isGlobalMassBalanced,
+            IsEnergyBalanced: isGlobalEnergyBalanced
+        );
+
+        // 3. Component Species Balances
+        var uniqueCompounds = _streams.Values
+            .SelectMany(s => s.Compounds)
+            .DistinctBy(c => c.Id)
+            .ToList();
+
+        var componentSummaries = new List<ComponentBalanceSummary>(uniqueCompounds.Count);
+        foreach (var compound in uniqueCompounds)
+        {
+            double feedMolar = 0.0;
+            foreach (var feed in externalFeeds)
+            {
+                int idx = -1;
+                for (int i = 0; i < feed.Compounds.Count; i++)
+                {
+                    if (string.Equals(feed.Compounds[i].Id, compound.Id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        idx = i;
+                        break;
+                    }
+                }
+                if (idx >= 0)
+                    feedMolar += feed.GetComponentMolarFlowMolPerSec(idx);
+            }
+
+            double prodMolar = 0.0;
+            foreach (var prod in finalProducts)
+            {
+                int idx = -1;
+                for (int i = 0; i < prod.Compounds.Count; i++)
+                {
+                    if (string.Equals(prod.Compounds[i].Id, compound.Id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        idx = i;
+                        break;
+                    }
+                }
+                if (idx >= 0)
+                    prodMolar += prod.GetComponentMolarFlowMolPerSec(idx);
+            }
+
+            double compMolarDelta = feedMolar - prodMolar;
+            double feedMass = feedMolar * compound.MolarMass * 1e-3;
+            double prodMass = prodMolar * compound.MolarMass * 1e-3;
+            double compMassDelta = feedMass - prodMass;
+            double relCompMassErr = feedMass > 1e-12 ? Math.Abs(compMassDelta) / feedMass : 0.0;
+            bool isCompConserved = relCompMassErr < 1e-5 || Math.Abs(compMassDelta) < 1e-6;
+
+            componentSummaries.Add(new ComponentBalanceSummary(
+                CompoundId: compound.Id,
+                CompoundName: compound.Name,
+                MolarMassGPerMol: compound.MolarMass,
+                FeedMolarFlowMolPerSec: feedMolar,
+                ProductMolarFlowMolPerSec: prodMolar,
+                MolarDeltaMolPerSec: compMolarDelta,
+                FeedMassFlowKgPerSec: feedMass,
+                ProductMassFlowKgPerSec: prodMass,
+                MassDeltaKgPerSec: compMassDelta,
+                RelativeMassError: relCompMassErr,
+                IsConserved: isCompConserved
+            ));
+        }
+
+        // 4. Equipment Unit Local Balances
+        var unitSummaries = new List<UnitBalanceSummary>(_units.Count);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            double inMass = unit.InletStreams.Sum(s => s.MassFlowRateKgPerSec);
+            double outMass = unit.OutletStreams.Sum(s => s.MassFlowRateKgPerSec);
+            double unitMassDelta = inMass - outMass;
+            double relUnitMassErr = inMass > 1e-12 ? Math.Abs(unitMassDelta) / inMass : 0.0;
+            bool isUnitMassBalanced = relUnitMassErr < 1e-5 || Math.Abs(unitMassDelta) < 1e-6;
+
+            double inEnthalpy = unit.InletStreams.Sum(s => s.TotalEnthalpyFlowWatts);
+            double outEnthalpy = unit.OutletStreams.Sum(s => s.TotalEnthalpyFlowWatts);
+            double duty = unit.EnergyDutyWatts;
+            double unitEnthalpyDelta = (inEnthalpy + duty) - outEnthalpy;
+            double unitEnergyScale = Math.Abs(inEnthalpy) + Math.Abs(duty) + Math.Abs(outEnthalpy);
+            double relUnitEnthalpyErr = unitEnergyScale > 1e-6 ? Math.Abs(unitEnthalpyDelta) / unitEnergyScale : 0.0;
+            bool isUnitEnergyBalanced = relUnitEnthalpyErr < 1e-4 || Math.Abs(unitEnthalpyDelta) < 1.0;
+
+            unitSummaries.Add(new UnitBalanceSummary(
+                UnitId: unit.Id,
+                UnitName: unit.Name,
+                UnitType: unit.UnitType,
+                InletMassFlowKgPerSec: inMass,
+                OutletMassFlowKgPerSec: outMass,
+                MassDeltaKgPerSec: unitMassDelta,
+                RelativeMassError: relUnitMassErr,
+                InletEnthalpyWatts: inEnthalpy,
+                OutletEnthalpyWatts: outEnthalpy,
+                HeatDutyWatts: duty,
+                EnthalpyDeltaWatts: unitEnthalpyDelta,
+                RelativeEnthalpyError: relUnitEnthalpyErr,
+                IsMassBalanced: isUnitMassBalanced,
+                IsEnergyBalanced: isUnitEnergyBalanced
+            ));
+        }
+
+        // 5. Boundary Feeds and Products Stream Summaries
+        var feedSummaries = externalFeeds.Select(s => new StreamBalanceSummary(
+            StreamId: s.Id,
+            StreamName: s.Name,
+            Direction: "Feed",
+            MolarFlowMolPerSec: s.MolarFlowRateMolPerSec,
+            MassFlowKgPerSec: s.MassFlowRateKgPerSec,
+            TemperatureKelvin: s.TemperatureKelvin,
+            PressureKpa: s.PressureKpa,
+            Phase: s.IsSolved ? s.Phase.ToString() : "Unsolved",
+            EnthalpyWatts: s.IsSolved ? s.TotalEnthalpyFlowWatts : 0.0
+        )).ToList();
+
+        var productSummaries = finalProducts.Select(s => new StreamBalanceSummary(
+            StreamId: s.Id,
+            StreamName: s.Name,
+            Direction: "Product",
+            MolarFlowMolPerSec: s.MolarFlowRateMolPerSec,
+            MassFlowKgPerSec: s.MassFlowRateKgPerSec,
+            TemperatureKelvin: s.TemperatureKelvin,
+            PressureKpa: s.PressureKpa,
+            Phase: s.IsSolved ? s.Phase.ToString() : "Unsolved",
+            EnthalpyWatts: s.IsSolved ? s.TotalEnthalpyFlowWatts : 0.0
+        )).ToList();
+
+        bool overallMassConserved = isGlobalMassBalanced && unitSummaries.All(u => u.IsMassBalanced);
+        bool overallEnergyConserved = isGlobalEnergyBalanced && unitSummaries.All(u => u.IsEnergyBalanced);
+
+        return new FlowsheetBalanceReport(
+            FlowsheetName: Name,
+            ThermodynamicModel: ThermodynamicPackage.Name,
+            GeneratedAtUtc: DateTime.UtcNow,
+            GlobalBalance: globalSummary,
+            ComponentBalances: componentSummaries,
+            UnitBalances: unitSummaries,
+            ExternalFeeds: feedSummaries,
+            FinalProducts: productSummaries,
+            IsMassConserved: overallMassConserved,
+            IsEnergyConserved: overallEnergyConserved
+        );
+    }
+
+    private static string EscapeDot(string str) =>
+        str.Replace("\"", "\\\"").Replace("\n", " ").Replace("\r", "");
+
+    private static string SanitizeDotId(string id) =>
+        id.Replace("-", "_").Replace(".", "_").Replace(":", "_").Replace("/", "_").Replace(" ", "_");
 }

@@ -15,6 +15,12 @@ public sealed class SqliteSimulationHistoryRepository : ISimulationHistoryReposi
 {
     private readonly SqliteDatabaseInitializer _db;
 
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
     public SqliteSimulationHistoryRepository(SqliteDatabaseInitializer db)
     {
         ArgumentNullException.ThrowIfNull(db);
@@ -32,15 +38,23 @@ public sealed class SqliteSimulationHistoryRepository : ISimulationHistoryReposi
         string executedAtIso = DateTime.UtcNow.ToString("O");
         string orderCsv = string.Join("->", executedOrder.Select(u => u.Id));
 
+        FlowsheetTopology topology = flowsheet.GetTopology();
+        FlowsheetBalanceReport balanceReport = flowsheet.GenerateBalanceReport();
+        string topologyDot = topology.DotGraph;
+        string topologyJson = System.Text.Json.JsonSerializer.Serialize(topology, JsonOptions);
+        string balanceReportJson = System.Text.Json.JsonSerializer.Serialize(balanceReport, JsonOptions);
+
         long runId;
         using (SqliteCommand insertRunCmd = connection.CreateCommand())
         {
             insertRunCmd.Transaction = transaction;
             insertRunCmd.CommandText = """
                 INSERT INTO SimulationRuns (
-                    FlowsheetName, ThermodynamicModel, ExecutedAtUtc, UnitExecutionOrder
+                    FlowsheetName, ThermodynamicModel, ExecutedAtUtc, UnitExecutionOrder,
+                    TopologyDot, TopologyJson, BalanceReportJson
                 ) VALUES (
-                    $name, $model, $executedAt, $order
+                    $name, $model, $executedAt, $order,
+                    $topologyDot, $topologyJson, $balanceReportJson
                 );
                 SELECT last_insert_rowid();
                 """;
@@ -48,6 +62,9 @@ public sealed class SqliteSimulationHistoryRepository : ISimulationHistoryReposi
             insertRunCmd.Parameters.AddWithValue("$model", flowsheet.ThermodynamicPackage.Name);
             insertRunCmd.Parameters.AddWithValue("$executedAt", executedAtIso);
             insertRunCmd.Parameters.AddWithValue("$order", orderCsv);
+            insertRunCmd.Parameters.AddWithValue("$topologyDot", topologyDot);
+            insertRunCmd.Parameters.AddWithValue("$topologyJson", topologyJson);
+            insertRunCmd.Parameters.AddWithValue("$balanceReportJson", balanceReportJson);
 
             runId = (long)(insertRunCmd.ExecuteScalar() ?? 0L);
         }
@@ -90,11 +107,15 @@ public sealed class SqliteSimulationHistoryRepository : ISimulationHistoryReposi
         string? thermoModel = null;
         DateTime executedAt = DateTime.MinValue;
         string[] unitOrder = [];
+        string? topologyDot = null;
+        string? topologyJson = null;
+        string? balanceReportJson = null;
 
         using (SqliteCommand runCmd = connection.CreateCommand())
         {
             runCmd.CommandText = """
-                SELECT FlowsheetName, ThermodynamicModel, ExecutedAtUtc, UnitExecutionOrder
+                SELECT FlowsheetName, ThermodynamicModel, ExecutedAtUtc, UnitExecutionOrder,
+                       TopologyDot, TopologyJson, BalanceReportJson
                 FROM SimulationRuns
                 WHERE Id = $id;
                 """;
@@ -109,6 +130,9 @@ public sealed class SqliteSimulationHistoryRepository : ISimulationHistoryReposi
             executedAt = DateTime.Parse(reader.GetString(2)).ToUniversalTime();
             string rawOrder = reader.GetString(3);
             unitOrder = string.IsNullOrEmpty(rawOrder) ? [] : rawOrder.Split("->", StringSplitOptions.RemoveEmptyEntries);
+            topologyDot = reader.IsDBNull(4) ? null : reader.GetString(4);
+            topologyJson = reader.IsDBNull(5) ? null : reader.GetString(5);
+            balanceReportJson = reader.IsDBNull(6) ? null : reader.GetString(6);
         }
 
         var streams = new List<StreamResultRecord>();
@@ -146,8 +170,39 @@ public sealed class SqliteSimulationHistoryRepository : ISimulationHistoryReposi
             ThermodynamicModel: thermoModel!,
             ExecutedAtUtc: executedAt,
             UnitExecutionOrder: unitOrder,
-            Streams: streams
+            Streams: streams,
+            TopologyDot: topologyDot,
+            TopologyJson: topologyJson,
+            BalanceReportJson: balanceReportJson
         );
+    }
+
+    public FlowsheetTopology? GetTopology(long runId)
+    {
+        using SqliteConnection connection = _db.CreateOpenConnection();
+        using SqliteCommand cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT TopologyJson FROM SimulationRuns WHERE Id = $id;";
+        cmd.Parameters.AddWithValue("$id", runId);
+
+        object? result = cmd.ExecuteScalar();
+        if (result is null || result is DBNull || string.IsNullOrWhiteSpace(result.ToString()))
+            return null;
+
+        return System.Text.Json.JsonSerializer.Deserialize<FlowsheetTopology>(result.ToString()!, JsonOptions);
+    }
+
+    public FlowsheetBalanceReport? GetBalanceReport(long runId)
+    {
+        using SqliteConnection connection = _db.CreateOpenConnection();
+        using SqliteCommand cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT BalanceReportJson FROM SimulationRuns WHERE Id = $id;";
+        cmd.Parameters.AddWithValue("$id", runId);
+
+        object? result = cmd.ExecuteScalar();
+        if (result is null || result is DBNull || string.IsNullOrWhiteSpace(result.ToString()))
+            return null;
+
+        return System.Text.Json.JsonSerializer.Deserialize<FlowsheetBalanceReport>(result.ToString()!, JsonOptions);
     }
 
     public IReadOnlyList<SimulationRunRecord> GetRecentRuns(int limit = 20)

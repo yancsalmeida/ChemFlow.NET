@@ -41,6 +41,39 @@ public sealed class MaterialStream
     /// <summary>Total enthalpy flow rate H_dot = F * H in Watts (J/s).</summary>
     public double TotalEnthalpyFlowWatts => MolarFlowRateMolPerSec * MolarEnthalpyJPerMol;
 
+    /// <summary>Average molar mass of the mixture \bar{M} = \sum z_i * M_i in g/mol.</summary>
+    public double AverageMolarMassGPerMol
+    {
+        get
+        {
+            double sum = 0.0;
+            for (int i = 0; i < Compounds.Count; i++)
+            {
+                sum += CompositionZ[i] * Compounds[i].MolarMass;
+            }
+            return sum;
+        }
+    }
+
+    /// <summary>Total mass flow rate \dot{m} = F * \bar{M} * 10^-3 in kg/s.</summary>
+    public double MassFlowRateKgPerSec => MolarFlowRateMolPerSec * AverageMolarMassGPerMol * 1e-3;
+
+    /// <summary>Component molar flow rate F_i = F * z_i in mol/s.</summary>
+    public double GetComponentMolarFlowMolPerSec(int compoundIndex)
+    {
+        if (compoundIndex < 0 || compoundIndex >= Compounds.Count)
+            throw new ArgumentOutOfRangeException(nameof(compoundIndex));
+        return MolarFlowRateMolPerSec * CompositionZ[compoundIndex];
+    }
+
+    /// <summary>Component mass flow rate \dot{m}_i = F * z_i * M_i * 10^-3 in kg/s.</summary>
+    public double GetComponentMassFlowKgPerSec(int compoundIndex)
+    {
+        if (compoundIndex < 0 || compoundIndex >= Compounds.Count)
+            throw new ArgumentOutOfRangeException(nameof(compoundIndex));
+        return MolarFlowRateMolPerSec * CompositionZ[compoundIndex] * Compounds[compoundIndex].MolarMass * 1e-3;
+    }
+
     public MaterialStream(
         string id,
         string name,

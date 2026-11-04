@@ -20,7 +20,10 @@ public sealed record SimulationRunRecord(
     string ThermodynamicModel,
     DateTime ExecutedAtUtc,
     IReadOnlyList<string> UnitExecutionOrder,
-    IReadOnlyList<StreamResultRecord> Streams
+    IReadOnlyList<StreamResultRecord> Streams,
+    string? TopologyDot = null,
+    string? TopologyJson = null,
+    string? BalanceReportJson = null
 );
 
 /// <summary>
@@ -31,4 +34,6 @@ public interface ISimulationHistoryRepository
     long SaveSimulationRun(ProcessFlowsheet flowsheet, IReadOnlyList<IUnitOperation> executedOrder);
     SimulationRunRecord? GetById(long runId);
     IReadOnlyList<SimulationRunRecord> GetRecentRuns(int limit = 20);
+    FlowsheetTopology? GetTopology(long runId);
+    FlowsheetBalanceReport? GetBalanceReport(long runId);
 }

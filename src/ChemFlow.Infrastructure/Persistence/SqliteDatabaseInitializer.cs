@@ -61,7 +61,10 @@ public sealed class SqliteDatabaseInitializer
                     FlowsheetName TEXT NOT NULL,
                     ThermodynamicModel TEXT NOT NULL,
                     ExecutedAtUtc TEXT NOT NULL,
-                    UnitExecutionOrder TEXT NOT NULL
+                    UnitExecutionOrder TEXT NOT NULL,
+                    TopologyDot TEXT,
+                    TopologyJson TEXT,
+                    BalanceReportJson TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS SimulationStreamResults (
@@ -79,6 +82,43 @@ public sealed class SqliteDatabaseInitializer
                 );
                 """;
             ddlCmd.ExecuteNonQuery();
+        }
+
+        // Schema migration for existing databases: ensure topology and balance columns exist
+        using (SqliteCommand checkCmd = connection.CreateCommand())
+        {
+            checkCmd.Transaction = transaction;
+            checkCmd.CommandText = "PRAGMA table_info(SimulationRuns);";
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (SqliteDataReader reader = checkCmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    columns.Add(reader.GetString(1));
+                }
+            }
+
+            if (!columns.Contains("TopologyDot"))
+            {
+                using var alterCmd = connection.CreateCommand();
+                alterCmd.Transaction = transaction;
+                alterCmd.CommandText = "ALTER TABLE SimulationRuns ADD COLUMN TopologyDot TEXT;";
+                alterCmd.ExecuteNonQuery();
+            }
+            if (!columns.Contains("TopologyJson"))
+            {
+                using var alterCmd = connection.CreateCommand();
+                alterCmd.Transaction = transaction;
+                alterCmd.CommandText = "ALTER TABLE SimulationRuns ADD COLUMN TopologyJson TEXT;";
+                alterCmd.ExecuteNonQuery();
+            }
+            if (!columns.Contains("BalanceReportJson"))
+            {
+                using var alterCmd = connection.CreateCommand();
+                alterCmd.Transaction = transaction;
+                alterCmd.CommandText = "ALTER TABLE SimulationRuns ADD COLUMN BalanceReportJson TEXT;";
+                alterCmd.ExecuteNonQuery();
+            }
         }
 
         foreach (ChemicalCompound compound in DefaultCompounds.All)

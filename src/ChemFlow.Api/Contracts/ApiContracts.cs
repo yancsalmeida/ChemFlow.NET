@@ -94,5 +94,11 @@ public sealed record PlantSimulationResponse(
     string ThermodynamicModel,
     IReadOnlyList<string> TopologicalExecutionOrder,
     IReadOnlyList<UnitResultDto> Units,
-    IReadOnlyList<StreamStateDto> Streams
+    IReadOnlyList<StreamStateDto> Streams,
+    bool IsMassConserved = true,
+    bool IsEnergyConserved = true,
+    double MassBalanceRelativeError = 0.0,
+    double EnergyBalanceRelativeError = 0.0,
+    string? TopologyUrl = null,
+    string? BalanceReportUrl = null
 );

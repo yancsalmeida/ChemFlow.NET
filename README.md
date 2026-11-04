@@ -3,13 +3,13 @@
 [![.NET CI](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml)
 [![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4.svg?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Thermodynamics](https://img.shields.io/badge/EOS-Peng--Robinson%20(1976)-00599C.svg)](#thermodynamics--process-physics)
-[![Tests](https://img.shields.io/badge/Tests-28%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
+[![Tests](https://img.shields.io/badge/Tests-35%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](docker-compose.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An enterprise-grade **Modular Steady-State Chemical Process & Thermodynamic Simulation Engine** built with **C# 12** and **.NET 8** following strict **Clean Architecture** principles.
 
-It models multi-component non-ideal vapor-liquid equilibrium (Peng-Robinson EOS and Raoult's Law), rigorous mass and enthalpy balances across unit operations, and directed acyclic graph (DAG) process flowsheet execution with relational persistence in **SQLite**.
+It models multi-component non-ideal vapor-liquid equilibrium (Peng-Robinson EOS and Raoult's Law), rigorous mass and enthalpy balances across unit operations, directed acyclic graph (DAG) process flowsheet execution with Graphviz/DOT topology export, mass/energy balance closure validation ($\Delta m < 10^{-5}$, $\Delta H < 10^{-4}$), and relational persistence in **SQLite**.
 
 ![ChemFlow.NET — Process Simulation & Thermodynamics Studio](docs/chemflow-studio-preview.png)
 
@@ -35,6 +35,8 @@ flowchart TD
         Thermo["Thermodynamics (PengRobinson EOS, Raoult, RachfordRice, Cardano)"]
         Units["Unit Operations (Mixer, HeaterCooler, FlashDrum, ConversionReactor)"]
         DAG["ProcessFlowsheet (Kahn's Topological Sort O(V + E))"]
+        Topology["Topology & DOT Export (Graphviz DOT & JSON Connectivity)"]
+        Balance["Mass & Energy Balance Closure (Global, Species, Unit-by-Unit)"]
         Entities["Entities (ChemicalCompound, MaterialStream, AntoineCoefficients)"]
     end
 
@@ -44,7 +46,7 @@ flowchart TD
     end
 
     subgraph Tests["ChemFlow.Tests (xUnit)"]
-        UnitTests["28 Automated Domain & Thermodynamics Tests"]
+        UnitTests["35 Automated Domain, Thermo & Integration Tests"]
     end
 
     Browser --> Endpoints
@@ -60,11 +62,11 @@ flowchart TD
 ```text
 ChemFlow.NET/
 ├── src/
-│   ├── ChemFlow.Domain/           # Pure domain models, thermodynamics, unit operations & DAG flowsheet engine
-│   ├── ChemFlow.Infrastructure/   # Relational SQLite persistence (ADO.NET / Microsoft.Data.Sqlite)
-│   └── ChemFlow.Api/              # ASP.NET Core Minimal API endpoints & OpenAPI/Swagger
+│   ├── ChemFlow.Domain/           # Pure domain models, thermodynamics, unit operations, DAG engine & balance reports
+│   ├── ChemFlow.Infrastructure/   # Relational SQLite persistence with schema migration (ADO.NET / Microsoft.Data.Sqlite)
+│   └── ChemFlow.Api/              # ASP.NET Core Minimal API endpoints, topology/report queries & OpenAPI/Swagger
 └── tests/
-    └── ChemFlow.Tests/            # Automated unit & integration test suite (xUnit)
+    └── ChemFlow.Tests/            # Automated unit & integration test suite (xUnit & WebApplicationFactory)
 ```
 
 ---
@@ -92,12 +94,14 @@ $$f(\beta) = \sum_{i=1}^{N} \frac{z_i (K_i - 1)}{1 + \beta (K_i - 1)} = 0$$
 using a safeguarded Newton-Raphson solver with automatic fallback to bisection root-finding upon boundary excursion. Subcooled liquid ($f(0) \le 0 \implies \beta = 0$) and superheated vapor ($f(1) \ge 0 \implies \beta = 1$) conditions are resolved analytically.
 
 ### 4. Unit Operations & Directed Acyclic Graph (DAG) Flowsheets
-- **`MaterialStream`**: Tracks molar flow rate, temperature, pressure, component mole fractions, phase state (`SubcooledLiquid`, `SuperheatedVapor`, `VaporLiquidEquilibrium`), vapor fraction $\beta$, and specific/total enthalpy.
+- **`MaterialStream`**: Tracks molar and mass flow rates ($\dot{m}$ in $\text{kg/s}$), temperature, pressure, mole fractions, phase state, vapor fraction $\beta$, and specific/total enthalpy.
 - **`Mixer`**: Adiabatic multi-stream mixing with rigorous component mass conservation and enthalpy balance root-finding for outlet temperature.
 - **`HeaterCooler`**: Sensible and phase-change thermal duty ($\dot{Q}$ in $\text{kW}$) calculation for target temperatures and pressures.
 - **`FlashDrum`**: Isothermal/isobaric vapor-liquid phase separator.
 - **`ConversionReactor`**: Stoichiometric reactor with limiting-reactant validation, fractional conversion, and heat of reaction ($\Delta H_{\text{rxn}}^\circ$) energy balance.
 - **`ProcessFlowsheet`**: Solves the execution sequence using **Kahn's Topological Sort Algorithm** ($O(V + E)$), identifying and rejecting recycle loops prior to execution.
+- **Flowsheet Topology & Graphviz DOT (`ToDot()`):** Automatically compiles the process graph into Graphviz DOT syntax and JSON node/edge schemas for visualization.
+- **Mass & Energy Balance Closure (`GenerateBalanceReport()`):** Verifies global conservation across plant boundary feeds and products ($\Delta m / m < 10^{-5}$, $\Delta H / H < 10^{-4}$), component species conservation, and individual unit operation energy balance closure.
 
 ---
 
@@ -113,6 +117,8 @@ using a safeguarded Newton-Raphson solver with automatic fallback to bisection r
 | `POST` | `/api/simulations/benchmark` | Execute and persist flash separation flowsheet (`Mixer` $\rightarrow$ `Heater` $\rightarrow$ `FlashDrum`) |
 | `GET` | `/api/simulations` | Retrieve historical simulation runs from SQLite |
 | `GET` | `/api/simulations/{id}` | Retrieve detailed stream results for a simulation run |
+| `GET` | `/api/simulations/{id}/topology` | Export flowsheet graph topology (JSON or Graphviz DOT via `?format=dot`) |
+| `GET` | `/api/simulations/{id}/report` | Retrieve mass and energy balance closure report (closure errors and conservation metrics) |
 
 ---
 
@@ -156,7 +162,7 @@ dotnet test ChemFlow.sln
 ```
 
 ```text
-Passed! - Failed: 0, Passed: 28, Skipped: 0, Total: 28, Duration: 79 ms
+Passed! - Failed: 0, Passed: 35, Skipped: 0, Total: 35, Duration: 652 ms
 ```
 
 ---

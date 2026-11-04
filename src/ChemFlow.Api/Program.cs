@@ -196,6 +196,7 @@ app.MapPost("/api/simulations/benchmark", (
     flowsheet.AddUnit(flashDrum);
 
     IReadOnlyList<IUnitOperation> executedOrder = flowsheet.Solve();
+    FlowsheetBalanceReport balanceReport = flowsheet.GenerateBalanceReport();
     long runId = historyRepo.SaveSimulationRun(flowsheet, executedOrder);
 
     var unitDtos = executedOrder
@@ -231,7 +232,13 @@ app.MapPost("/api/simulations/benchmark", (
         ThermodynamicModel: thermo.Name,
         TopologicalExecutionOrder: executedOrder.Select(u => u.Id).ToList(),
         Units: unitDtos,
-        Streams: streamDtos
+        Streams: streamDtos,
+        IsMassConserved: balanceReport.IsMassConserved,
+        IsEnergyConserved: balanceReport.IsEnergyConserved,
+        MassBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeMassError, 8),
+        EnergyBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeEnthalpyError, 8),
+        TopologyUrl: $"/api/simulations/{runId}/topology",
+        BalanceReportUrl: $"/api/simulations/{runId}/report"
     ));
 })
 .WithName("RunBenchmarkSimulation")
@@ -250,4 +257,53 @@ app.MapGet("/api/simulations/{id:long}", (long id, ISimulationHistoryRepository 
 .WithName("GetSimulationById")
 .WithOpenApi();
 
+app.MapGet("/api/simulations/{id:long}/topology", (
+    long id,
+    string? format,
+    HttpContext httpContext,
+    ISimulationHistoryRepository historyRepo) =>
+{
+    SimulationRunRecord? run = historyRepo.GetById(id);
+    if (run is null)
+        return Results.NotFound(new { error = $"Simulation run {id} not found." });
+
+    bool wantsDot = string.Equals(format, "dot", StringComparison.OrdinalIgnoreCase)
+        || httpContext.Request.Headers.Accept.Any(a => a?.Contains("text/vnd.graphviz") == true || a?.Contains("text/plain") == true);
+
+    if (wantsDot)
+    {
+        if (string.IsNullOrWhiteSpace(run.TopologyDot))
+            return Results.NotFound(new { error = $"Graphviz DOT topology not available for simulation run {id}." });
+
+        return Results.Text(run.TopologyDot, "text/vnd.graphviz; charset=utf-8");
+    }
+
+    FlowsheetTopology? topology = historyRepo.GetTopology(id);
+    if (topology is null)
+        return Results.NotFound(new { error = $"Topology for simulation run {id} not found." });
+
+    return Results.Ok(topology);
+})
+.WithName("GetSimulationTopology")
+.WithOpenApi();
+
+app.MapGet("/api/simulations/{id:long}/report", (long id, ISimulationHistoryRepository historyRepo) =>
+{
+    FlowsheetBalanceReport? report = historyRepo.GetBalanceReport(id);
+    if (report is null)
+    {
+        SimulationRunRecord? run = historyRepo.GetById(id);
+        if (run is null)
+            return Results.NotFound(new { error = $"Simulation run {id} not found." });
+
+        return Results.NotFound(new { error = $"Balance report for simulation run {id} not available." });
+    }
+
+    return Results.Ok(report);
+})
+.WithName("GetSimulationBalanceReport")
+.WithOpenApi();
+
 app.Run();
+
+public partial class Program { }
