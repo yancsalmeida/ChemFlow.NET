@@ -1,6 +1,9 @@
 # ChemFlow.NET
 
 [![.NET CI](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml)
+[![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4.svg?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](docker-compose.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Modular Steady-State Chemical Process & Thermodynamic Simulation Engine in C# / .NET 8**
 
@@ -50,13 +53,28 @@ ChemFlow.NET/
 
 ## Getting Started
 
-### Prerequisites
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+### Option 1: Run with Docker Compose (Recommended)
 
-### Build, Test & Run API
+Requires only [Docker](https://docs.docker.com/get-docker/):
 
 ```bash
+docker compose up --build
+```
+
+- **Interactive Web Studio:** [http://localhost:5080](http://localhost:5080)
+- **OpenAPI / Swagger UI:** [http://localhost:5080/swagger](http://localhost:5080/swagger)
+
+### Option 2: Run with Native .NET SDK
+
+Requires [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0):
+
+```bash
+# Build solution
 dotnet build ChemFlow.sln
+
+# Run all 21 unit & integration tests
 dotnet test ChemFlow.sln
+
+# Run API server
 dotnet run --project src/ChemFlow.Api
 ```

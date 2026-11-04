@@ -1,0 +1,24 @@
+services:
+  chemflow-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chemflow-api
+    ports:
+      - "5080:5080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5080
+      - ConnectionStrings__ChemFlowDb=Data Source=/app/data/chemflow.db
+    volumes:
+      - chemflow-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5080/api/compounds || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  chemflow-data:
