@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChemFlow.NET — Process Simulation &amp; VLE Studio</title>
+  <style>
+    :root {
+      --bg-main: #0b0f19;
+      --bg-panel: #111827;
+      --bg-card: #1e293b;
+      --border: #334155;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-indigo: #6366f1;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+      --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* Top Header */
+    header {
+      background: rgba(17, 24, 39, 0.92);
+      border-bottom: 1px solid var(--border);
+      padding: 0.9rem 1.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(8px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-indigo));
+      color: #0b0f19;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      padding: 0.35rem 0.65rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      letter-spacing: 0.5px;
+    }
+
+    .brand-title h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-title p {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .pill-badge {
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      padding: 0.3rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+    }
+
+    .btn-link {
+      background: var(--bg-card);
+      color: var(--accent-blue);
+      border: 1px solid var(--border);
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+
+    .btn-link:hover {
+      border-color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.1);
+    }
+
+    /* Main Layout */
+    main {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 1.25rem 1.75rem 2.5rem;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 1.25rem;
+    }
+
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.15rem;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.65rem;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+    }
+
+    .panel-header h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent-blue);
+    }
+
+    /* Controls Sidebar */
+    .control-group {
+      margin-bottom: 0.95rem;
+    }
+
+    .control-group label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.3rem;
+    }
+
+    .control-group label span.val {
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-blue);
+      cursor: pointer;
+    }
+
+    select {
+      width: 100%;
+      background: var(--bg-card);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.84rem;
+      font-family: var(--font-mono);
+    }
+
+    .btn-primary {
+      width: 100%;
+      background: linear-gradient(135deg, #0284c7, #4f46e5);
+      color: white;
+      border: none;
+      padding: 0.7rem 1rem;
+      border-radius: 7px;
+      font-weight: 700;
+      font-size: 0.88rem;
+      cursor: pointer;
+      margin-top: 0.35rem;
+      transition: opacity 0.15s;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.92;
+    }
+
+    /* Right Workspace */
+    .workspace {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .top-grid {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 1.25rem;
+    }
+
+    /* KPI Row */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .kpi-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.7rem 0.85rem;
+    }
+
+    .kpi-card .label {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .kpi-card .value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      margin-top: 0.15rem;
+      color: var(--text-primary);
+    }
+
+    /* SVG PFD Canvas */
+    .pfd-container {
+      background: #080c14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Stream Table */
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      font-family: var(--font-mono);
+    }
+
+    th, td {
+      padding: 0.6rem 0.75rem;
+      text-align: right;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+    }
+
+    th:first-child, td:first-child,
+    th:nth-child(2), td:nth-child(2),
+    th:nth-child(3), td:nth-child(3) {
+      text-align: left;
+    }
+
+    th {
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      background: rgba(30, 41, 59, 0.5);
+    }
+
+    tr:hover td {
+      background: rgba(56, 189, 248, 0.05);
+    }
+
+    .phase-tag {
+      padding: 0.18rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    .phase-SubcooledLiquid {
+      background: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+    }
+
+    .phase-VaporLiquidEquilibrium {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fbbf24;
+    }
+
+    .phase-SuperheatedVapor {
+      background: rgba(244, 63, 94, 0.18);
+      color: #fb7185;
+    }
+
+    canvas#txyCanvas {
+      width: 100%;
+      height: 295px;
+      background: #080c14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-badge">C# / .NET 8</span>
+      <div class="brand-title">
+        <h1>ChemFlow.NET — Process Simulation &amp; Thermodynamics Studio</h1>
+        <p>Clean Architecture · Kahn's DAG Topological Solver · Safeguarded Rachford-Rice VLE · SQLite ACID</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="pill-badge" id="sqlStatusBadge">SQLite: 6 Compounds Loaded</span>
+      <a href="/swagger" class="btn-link">Open Swagger OpenAPI &rarr;</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left Sidebar: Operating Parameters -->
+    <aside class="panel">
+      <div class="panel-header">
+        <h2>Plant Specifications</h2>
+      </div>
+
+      <div class="control-group">
+        <label>S-101 Benzene Feed Flow <span class="val" id="lblF1">50.0 mol/s</span></label>
+        <input type="range" id="inpF1" min="10" max="100" step="2" value="50" />
+      </div>
+
+      <div class="control-group">
+        <label>S-101 Feed Temperature <span class="val" id="lblT1">300.0 K (26.9 °C)</span></label>
+        <input type="range" id="inpT1" min="285" max="345" step="1" value="300" />
+      </div>
+
+      <div class="control-group">
+        <label>S-102 Toluene Feed Flow <span class="val" id="lblF2">50.0 mol/s</span></label>
+        <input type="range" id="inpF2" min="10" max="100" step="2" value="50" />
+      </div>
+
+      <div class="control-group">
+        <label>S-102 Feed Temperature <span class="val" id="lblT2">310.0 K (36.9 °C)</span></label>
+        <input type="range" id="inpT2" min="285" max="345" step="1" value="310" />
+      </div>
+
+      <div class="control-group">
+        <label>E-101 Preheater Target T <span class="val" id="lblTheat">368.15 K (95.0 °C)</span></label>
+        <input type="range" id="inpTheat" min="340" max="395" step="0.5" value="368.15" />
+      </div>
+
+      <div class="control-group">
+        <label>V-101 Flash Drum Pressure <span class="val" id="lblPdrum">101.33 kPa</span></label>
+        <input type="range" id="inpPdrum" min="60" max="160" step="1" value="101.325" />
+      </div>
+
+      <button class="btn-primary" id="btnSimulate">Solve DAG Flowsheet &amp; Persist to SQL</button>
+
+      <div class="panel-header" style="margin-top: 1.5rem;">
+        <h2>Binary VLE T-x-y Diagram</h2>
+      </div>
+
+      <div class="control-group">
+        <label>Light Key (More Volatile)</label>
+        <select id="selLight">
+          <option value="C6H6" selected>C6H6 — Benzene (Tb = 80.1 °C)</option>
+          <option value="n-C6H14">n-C6H14 — n-Hexane (Tb = 68.7 °C)</option>
+          <option value="C2H5OH">C2H5OH — Ethanol (Tb = 78.3 °C)</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>Heavy Key (Less Volatile)</label>
+        <select id="selHeavy">
+          <option value="C7H8" selected>C7H8 — Toluene (Tb = 110.6 °C)</option>
+          <option value="n-C7H16">n-C7H16 — n-Heptane (Tb = 98.4 °C)</option>
+          <option value="H2O">H2O — Water (Tb = 100.0 °C)</option>
+        </select>
+      </div>
+    </aside>
+
+    <!-- Right Workspace: PFD + VLE Chart + Stream Table -->
+    <section class="workspace">
+      <div class="top-grid">
+        <!-- PFD Flowsheet Diagram -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Process Flow Diagram (DAG Topological Order)</h2>
+            <span id="dagOrderBadge" style="font-family: var(--font-mono); font-size: 0.76rem; color: #34d399;">
+              Order: MIX-101 &rarr; E-101 &rarr; V-101
+            </span>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="label">Preheater Duty (E-101)</div>
+              <div class="value" id="kpiDuty">-- kW</div>
+            </div>
+            <div class="kpi-card">
+              <div class="label">Flash Vapor Fraction (&beta;)</div>
+              <div class="value" id="kpiBeta">--</div>
+            </div>
+            <div class="kpi-card">
+              <div class="label">Overhead Benzene y₁</div>
+              <div class="value" id="kpiVaporY">--</div>
+            </div>
+            <div class="kpi-card">
+              <div class="label">SQL Run ID</div>
+              <div class="value" id="kpiRunId">#--</div>
+            </div>
+          </div>
+
+          <div class="pfd-container">
+            <svg viewBox="0 0 680 235" width="100%" height="235">
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+                </marker>
+                <marker id="arrow-vap" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb7185" />
+                </marker>
+              </defs>
+
+              <!-- S-101 & S-102 Feed Pipes -->
+              <line x1="25" y1="70" x2="125" y2="98" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+              <text x="28" y="58" fill="#94a3b8" font-family="monospace" font-size="11">S-101 (Benzene)</text>
+
+              <line x1="25" y1="165" x2="125" y2="132" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+              <text x="28" y="185" fill="#94a3b8" font-family="monospace" font-size="11">S-102 (Toluene)</text>
+
+              <!-- MIX-101 Block -->
+              <rect x="130" y="82" width="86" height="66" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2" />
+              <text x="173" y="108" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="12">MIX-101</text>
+              <text x="173" y="125" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="10">Adiabatic Mixer</text>
+              <text x="173" y="141" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">DAG Step #1</text>
+
+              <!-- S-103 Pipe -->
+              <line x1="216" y1="115" x2="288" y2="115" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+              <text x="252" y="105" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10">S-103</text>
+
+              <!-- E-101 Heater Block -->
+              <circle cx="332" cy="115" r="38" fill="#1e293b" stroke="#f59e0b" stroke-width="2" />
+              <path d="M 312 115 L 322 103 L 332 127 L 342 103 L 352 115" fill="none" stroke="#f59e0b" stroke-width="2" />
+              <text x="332" y="92" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="11">E-101</text>
+              <text x="332" y="143" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">DAG #2</text>
+              <text x="332" y="172" text-anchor="middle" fill="#fbbf24" font-family="monospace" font-size="11" id="svgHeaterDuty">+Q kW</text>
+
+              <!-- S-104 Pipe -->
+              <line x1="370" y1="115" x2="445" y2="115" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrow)" />
+              <text x="408" y="105" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10">S-104</text>
+
+              <!-- V-101 Flash Drum Vessel -->
+              <rect x="452" y="52" width="76" height="126" rx="34" fill="#1e293b" stroke="#10b981" stroke-width="2.2" />
+              <line x1="454" y1="125" x2="526" y2="125" stroke="#38bdf8" stroke-dasharray="4 3" stroke-width="1.5" />
+              <text x="490" y="92" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="12">V-101</text>
+              <text x="490" y="109" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="10">Flash Drum</text>
+              <text x="490" y="148" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">DAG Step #3</text>
+
+              <!-- S-105 Overhead Vapor Pipe -->
+              <path d="M 490 52 L 490 28 L 645 28" fill="none" stroke="#fb7185" stroke-width="2.5" marker-end="url(#arrow-vap)" />
+              <text x="572" y="21" text-anchor="middle" fill="#fb7185" font-family="monospace" font-size="11" id="svgVapLabel">S-105 Overhead Vapor</text>
+
+              <!-- S-106 Bottoms Liquid Pipe -->
+              <path d="M 490 178 L 490 202 L 645 202" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+              <text x="572" y="195" text-anchor="middle" fill="#38bdf8" font-family="monospace" font-size="11" id="svgLiqLabel">S-106 Bottoms Liquid</text>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Binary VLE T-x-y Diagram -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Isobaric T-x-y Phase Equilibrium Diagram</h2>
+            <span id="txySubtitle" style="font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-secondary);">
+              P = 101.33 kPa
+            </span>
+          </div>
+          <canvas id="txyCanvas" width="520" height="295"></canvas>
+        </div>
+      </div>
+
+      <!-- Stream Table -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Converged Material &amp; Energy Stream Table</h2>
+          <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);">
+            Reference State: Liquid at 298.15 K (25.0 °C)
+          </span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stream ID</th>
+                <th>Name</th>
+                <th>Phase State</th>
+                <th>Flow (mol/s)</th>
+                <th>Temp (K / °C)</th>
+                <th>Pressure (kPa)</th>
+                <th>Vapor &beta;</th>
+                <th>Enthalpy (kW)</th>
+                <th>x/y Benzene</th>
+                <th>x/y Toluene</th>
+              </tr>
+            </thead>
+            <tbody id="streamTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const els = {
+      inpF1: document.getElementById('inpF1'),
+      inpT1: document.getElementById('inpT1'),
+      inpF2: document.getElementById('inpF2'),
+      inpT2: document.getElementById('inpT2'),
+      inpTheat: document.getElementById('inpTheat'),
+      inpPdrum: document.getElementById('inpPdrum'),
+      lblF1: document.getElementById('lblF1'),
+      lblT1: document.getElementById('lblT1'),
+      lblF2: document.getElementById('lblF2'),
+      lblT2: document.getElementById('lblT2'),
+      lblTheat: document.getElementById('lblTheat'),
+      lblPdrum: document.getElementById('lblPdrum'),
+      selLight: document.getElementById('selLight'),
+      selHeavy: document.getElementById('selHeavy'),
+      btnSimulate: document.getElementById('btnSimulate'),
+      streamTableBody: document.getElementById('streamTableBody'),
+      kpiDuty: document.getElementById('kpiDuty'),
+      kpiBeta: document.getElementById('kpiBeta'),
+      kpiVaporY: document.getElementById('kpiVaporY'),
+      kpiRunId: document.getElementById('kpiRunId'),
+      svgHeaterDuty: document.getElementById('svgHeaterDuty'),
+      svgVapLabel: document.getElementById('svgVapLabel'),
+      svgLiqLabel: document.getElementById('svgLiqLabel'),
+      txySubtitle: document.getElementById('txySubtitle'),
+      txyCanvas: document.getElementById('txyCanvas')
+    };
+
+    function updateLabels() {
+      const f1 = parseFloat(els.inpF1.value);
+      const t1 = parseFloat(els.inpT1.value);
+      const f2 = parseFloat(els.inpF2.value);
+      const t2 = parseFloat(els.inpT2.value);
+      const th = parseFloat(els.inpTheat.value);
+      const pd = parseFloat(els.inpPdrum.value);
+
+      els.lblF1.textContent = `${f1.toFixed(1)} mol/s`;
+      els.lblT1.textContent = `${t1.toFixed(1)} K (${(t1 - 273.15).toFixed(1)} °C)`;
+      els.lblF2.textContent = `${f2.toFixed(1)} mol/s`;
+      els.lblT2.textContent = `${t2.toFixed(1)} K (${(t2 - 273.15).toFixed(1)} °C)`;
+      els.lblTheat.textContent = `${th.toFixed(2)} K (${(th - 273.15).toFixed(1)} °C)`;
+      els.lblPdrum.textContent = `${pd.toFixed(2)} kPa`;
+    }
+
+    async function runPlantSimulation() {
+      updateLabels();
+      const payload = {
+        benzeneFeedFlowMolPerSec: parseFloat(els.inpF1.value),
+        benzeneFeedTemperatureKelvin: parseFloat(els.inpT1.value),
+        tolueneFeedFlowMolPerSec: parseFloat(els.inpF2.value),
+        tolueneFeedTemperatureKelvin: parseFloat(els.inpT2.value),
+        preheaterTargetTemperatureKelvin: parseFloat(els.inpTheat.value),
+        flashDrumPressureKpa: parseFloat(els.inpPdrum.value)
+      };
+
+      const res = await fetch('/api/simulations/benchmark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      const heater = data.units.find(u => u.unitType === 'HeaterCooler');
+      const s4 = data.streams.find(s => s.id === 'S-104');
+      const s5 = data.streams.find(s => s.id === 'S-105');
+      const s6 = data.streams.find(s => s.id === 'S-106');
+
+      els.kpiDuty.textContent = `${heater.energyDutyKilowatts.toFixed(1)} kW`;
+      els.kpiBeta.textContent = s4.vaporFractionBeta.toFixed(4);
+      els.kpiVaporY.textContent = `${(s5.moleFractions['C6H6'] * 100).toFixed(1)}%`;
+      els.kpiRunId.textContent = `#${data.savedSimulationRunId}`;
+
+      els.svgHeaterDuty.textContent = `Q = ${heater.energyDutyKilowatts.toFixed(1)} kW`;
+      els.svgVapLabel.textContent = `S-105 Vapor (${s5.molarFlowRateMolPerSec.toFixed(1)} mol/s)`;
+      els.svgLiqLabel.textContent = `S-106 Liquid (${s6.molarFlowRateMolPerSec.toFixed(1)} mol/s)`;
+
+      els.streamTableBody.innerHTML = data.streams.map(s => `
+        <tr>
+          <td style="font-weight:700; color:#38bdf8;">${s.id}</td>
+          <td>${s.name}</td>
+          <td><span class="phase-tag phase-${s.phase}">${s.phase}</span></td>
+          <td>${s.molarFlowRateMolPerSec.toFixed(2)}</td>
+          <td>${s.temperatureKelvin.toFixed(2)} K (${s.temperatureCelsius.toFixed(1)} °C)</td>
+          <td>${s.pressureKpa.toFixed(2)}</td>
+          <td>${s.vaporFractionBeta.toFixed(4)}</td>
+          <td>${s.totalEnthalpyFlowKilowatts.toFixed(2)}</td>
+          <td>${(s.moleFractions['C6H6'] ?? 0).toFixed(4)}</td>
+          <td>${(s.moleFractions['C7H8'] ?? 0).toFixed(4)}</td>
+        </tr>
+      `).join('');
+
+      await loadTxyDiagram(s4.moleFractions['C6H6'], s4.temperatureKelvin);
+    }
+
+    async function loadTxyDiagram(operatingZ1 = 0.5, operatingT = 368.15) {
+      const light = els.selLight.value;
+      const heavy = els.selHeavy.value;
+      const pressure = parseFloat(els.inpPdrum.value);
+
+      els.txySubtitle.textContent = `${light} / ${heavy} @ ${pressure.toFixed(2)} kPa`;
+
+      const res = await fetch('/api/thermo/txy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lightCompoundId: light,
+          heavyCompoundId: heavy,
+          pressureKpa: pressure,
+          steps: 25
+        })
+      });
+      const points = await res.json();
+      drawTxyChart(points, light, operatingZ1, operatingT);
+    }
+
+    function drawTxyChart(points, lightId, opZ1, opT) {
+      const canvas = els.txyCanvas;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const pad = { left: 54, right: 24, top: 22, bottom: 38 };
+      const plotW = w - pad.left - pad.right;
+      const plotH = h - pad.top - pad.bottom;
+
+      const allTemps = points.flatMap(p => [p.bubbleTemperatureKelvin, p.dewTemperatureKelvin]);
+      if (opT) allTemps.push(opT);
+      const minT = Math.floor(Math.min(...allTemps) - 3);
+      const maxT = Math.ceil(Math.max(...allTemps) + 3);
+
+      const toX = frac => pad.left + frac * plotW;
+      const toY = temp => pad.top + (1 - (temp - minT) / (maxT - minT)) * plotH;
+
+      // Grid lines
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      ctx.font = '11px monospace';
+      ctx.fillStyle = '#94a3b8';
+
+      for (let i = 0; i <= 4; i++) {
+        const frac = i * 0.25;
+        const x = toX(frac);
+        ctx.beginPath();
+        ctx.moveTo(x, pad.top);
+        ctx.lineTo(x, pad.top + plotH);
+        ctx.stroke();
+        ctx.fillText(frac.toFixed(2), x - 12, h - 14);
+      }
+
+      for (let i = 0; i <= 4; i++) {
+        const tVal = minT + (i / 4) * (maxT - minT);
+        const y = toY(tVal);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + plotW, y);
+        ctx.stroke();
+        ctx.fillText(`${tVal.toFixed(0)}K`, 10, y + 4);
+      }
+
+      // Bubble Curve (T vs x1) - Blue
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      points.forEach((p, idx) => {
+        const x = toX(p.moleFractionLight);
+        const y = toY(p.bubbleTemperatureKelvin);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Dew Curve (T vs y1) - Rose
+      ctx.strokeStyle = '#fb7185';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      points.forEach((p, idx) => {
+        const x = toX(p.equilibriumVaporFractionLightY);
+        const y = toY(p.dewTemperatureKelvin);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Operating Flash Point (if Benzene/Toluene selected)
+      if (lightId === 'C6H6' && opZ1 !== undefined && opT !== undefined) {
+        const ox = toX(opZ1);
+        const oy = toY(opT);
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(ox, oy, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText('V-101 Operating Point', ox + 8, oy - 6);
+      }
+
+      // Legend
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText('— Bubble Line (Liquid x₁)', pad.left + 12, pad.top + 16);
+      ctx.fillStyle = '#fb7185';
+      ctx.fillText('— Dew Line (Vapor y₁)', pad.left + 205, pad.top + 16);
+    }
+
+    ['inpF1', 'inpT1', 'inpF2', 'inpT2', 'inpTheat', 'inpPdrum'].forEach(id => {
+      document.getElementById(id).addEventListener('input', updateLabels);
+      document.getElementById(id).addEventListener('change', runPlantSimulation);
+    });
+    els.selLight.addEventListener('change', () => loadTxyDiagram());
+    els.selHeavy.addEventListener('change', () => loadTxyDiagram());
+    els.btnSimulate.addEventListener('click', runPlantSimulation);
+
+    runPlantSimulation();
+  </script>
+</body>
+</html>

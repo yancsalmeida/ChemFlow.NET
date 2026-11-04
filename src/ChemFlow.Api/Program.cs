@@ -29,11 +29,10 @@ builder.Services.AddSingleton<IThermodynamicPackage, RaoultThermodynamicPackage>
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.MapGet("/api/compounds", (ICompoundRepository repo) =>
 {
