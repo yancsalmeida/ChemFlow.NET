@@ -13,11 +13,18 @@ public sealed record CompoundSummaryDto(
     double NormalBoilingPointCelsius
 );
 
+public sealed record ThermodynamicModelDto(
+    string Id,
+    string Name,
+    string Description
+);
+
 public sealed record FlashCalculationRequest(
     [property: DefaultValue(new[] { "C6H6", "C7H8" })] IReadOnlyList<string> CompoundIds,
     [property: DefaultValue(new[] { 0.5, 0.5 })] IReadOnlyList<double> CompositionZ,
     [property: DefaultValue(368.15)] double TemperatureKelvin = 368.15,
-    [property: DefaultValue(101.325)] double PressureKpa = 101.325
+    [property: DefaultValue(101.325)] double PressureKpa = 101.325,
+    [property: DefaultValue("Peng-Robinson")] string? Model = "Peng-Robinson"
 );
 
 public sealed record FlashCalculationResponse(
@@ -40,7 +47,8 @@ public sealed record BinaryTxyDiagramRequest(
     [property: DefaultValue("C6H6")] string LightCompoundId = "C6H6",
     [property: DefaultValue("C7H8")] string HeavyCompoundId = "C7H8",
     [property: DefaultValue(101.325)] double PressureKpa = 101.325,
-    [property: DefaultValue(11)] int Steps = 11
+    [property: DefaultValue(11)] int Steps = 11,
+    [property: DefaultValue("Peng-Robinson")] string? Model = "Peng-Robinson"
 );
 
 public sealed record TxyDiagramPointDto(

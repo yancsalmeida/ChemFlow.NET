@@ -25,7 +25,9 @@ builder.Services.AddSingleton(_ =>
 
 builder.Services.AddScoped<ICompoundRepository, SqliteCompoundRepository>();
 builder.Services.AddScoped<ISimulationHistoryRepository, SqliteSimulationHistoryRepository>();
-builder.Services.AddSingleton<IThermodynamicPackage, RaoultThermodynamicPackage>();
+builder.Services.AddSingleton<RaoultThermodynamicPackage>();
+builder.Services.AddSingleton<PengRobinsonThermodynamicPackage>();
+builder.Services.AddSingleton<IThermodynamicPackage>(sp => sp.GetRequiredService<PengRobinsonThermodynamicPackage>());
 
 var app = builder.Build();
 
@@ -79,11 +81,27 @@ app.MapGet("/api/compounds/{id}", (string id, ICompoundRepository repo) =>
 .WithName("GetCompoundById")
 .WithOpenApi();
 
+app.MapGet("/api/thermo/models", () =>
+{
+    return Results.Ok(new ThermodynamicModelDto[]
+    {
+        new("peng-robinson", "Peng-Robinson EOS (1976)", "Industry-standard cubic equation of state for high-pressure non-ideal fluids and hydrocarbon systems."),
+        new("raoult", "Ideal Raoult's Law", "Ideal gas and ideal solution model using pure-component Antoine vapor pressures.")
+    });
+})
+.WithName("GetThermodynamicModels")
+.WithOpenApi();
+
 app.MapPost("/api/thermo/flash", (
     FlashCalculationRequest request,
     ICompoundRepository compoundRepo,
-    IThermodynamicPackage thermo) =>
+    RaoultThermodynamicPackage raoult,
+    PengRobinsonThermodynamicPackage pengRobinson) =>
 {
+    IThermodynamicPackage thermo = request.Model?.ToLowerInvariant() is "raoult" or "ideal"
+        ? raoult
+        : pengRobinson;
+
     IReadOnlyList<ChemicalCompound> compounds = compoundRepo.GetByIds(request.CompoundIds);
     FlashResult result = thermo.CalculateIsothermalFlash(
         compounds,
@@ -113,8 +131,13 @@ app.MapPost("/api/thermo/flash", (
 app.MapPost("/api/thermo/txy", (
     BinaryTxyDiagramRequest request,
     ICompoundRepository compoundRepo,
-    IThermodynamicPackage thermo) =>
+    RaoultThermodynamicPackage raoult,
+    PengRobinsonThermodynamicPackage pengRobinson) =>
 {
+    IThermodynamicPackage thermo = request.Model?.ToLowerInvariant() is "raoult" or "ideal"
+        ? raoult
+        : pengRobinson;
+
     IReadOnlyList<ChemicalCompound> binary = compoundRepo.GetByIds([request.LightCompoundId, request.HeavyCompoundId]);
     int steps = Math.Clamp(request.Steps, 2, 101);
     var points = new List<TxyDiagramPointDto>(steps);
