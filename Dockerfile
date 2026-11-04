@@ -26,6 +26,11 @@ RUN dotnet publish src/ChemFlow.Api/ChemFlow.Api.csproj -c Release -o /app/publi
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
+# Install curl for container healthchecks
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create storage directory for persistent SQLite database
 RUN mkdir -p /app/data
 
