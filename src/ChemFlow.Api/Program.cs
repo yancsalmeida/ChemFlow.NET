@@ -10,74 +10,62 @@ using ChemFlow.Infrastructure.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Configure SQLite Database & Dependency Injection (IoC Container)
-string connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+string connectionString = builder.Configuration.GetConnectionString("ChemFlowDb")
     ?? "Data Source=chemflow.db";
 
-builder.Services.AddSingleton(new SqliteDatabaseInitializer(connectionString));
+builder.Services.AddSingleton(_ =>
+{
+    var initializer = new SqliteDatabaseInitializer(connectionString);
+    initializer.InitializeAndSeed();
+    return initializer;
+});
+
 builder.Services.AddScoped<ICompoundRepository, SqliteCompoundRepository>();
 builder.Services.AddScoped<ISimulationHistoryRepository, SqliteSimulationHistoryRepository>();
 builder.Services.AddSingleton<IThermodynamicPackage, RaoultThermodynamicPackage>();
 
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new()
-    {
-        Title = "ChemFlow.NET — Process Simulation & Thermodynamics Engine API",
-        Version = "v1.0",
-        Description = "Enterprise C# / .NET 8 REST API for multicomponent Vapor-Liquid Equilibrium (Rachford-Rice), " +
-                      "Directed Acyclic Graph (DAG) flowsheet solving, and relational SQLite simulation tracking."
-    });
-});
-
 var app = builder.Build();
 
-// 2. Initialize Relational SQL Schema and Seed Default Compounds on Startup
-using (var scope = app.Services.CreateScope())
+if (app.Environment.IsDevelopment())
 {
-    var dbInit = scope.ServiceProvider.GetRequiredService<SqliteDatabaseInitializer>();
-    dbInit.InitializeAndSeed();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
-app.UseSwagger();
-app.UseSwaggerUI();
-
-app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
-
-// ============================================================================
-// COMPOUNDS ENDPOINTS (/api/compounds)
-// ============================================================================
-var compoundsGroup = app.MapGroup("/api/compounds").WithTags("Chemical Compounds (SQL)");
-
-compoundsGroup.MapGet("/", (ICompoundRepository repo) =>
+app.MapGet("/api/compounds", (ICompoundRepository repo) =>
 {
-    var list = repo.GetAll().Select(c =>
-    {
-        double tbK = c.GetNormalBoilingPointKelvin();
-        return new CompoundSummaryDto(
-            c.Id,
-            c.Name,
-            c.Formula,
-            c.MolarMass,
-            c.CriticalTemperatureKelvin,
-            c.CriticalPressureKpa,
-            Math.Round(tbK, 2),
-            Math.Round(tbK - 273.15, 2)
-        );
-    });
-    return Results.Ok(list);
+    var compounds = repo.GetAll()
+        .Select(c =>
+        {
+            double tbKelvin = c.GetNormalBoilingPointKelvin();
+            return new CompoundSummaryDto(
+                c.Id,
+                c.Name,
+                c.Formula,
+                c.MolarMass,
+                c.CriticalTemperatureKelvin,
+                c.CriticalPressureKpa,
+                Math.Round(tbKelvin, 2),
+                Math.Round(tbKelvin - 273.15, 2)
+            );
+        })
+        .ToList();
+
+    return Results.Ok(compounds);
 })
-.WithName("GetAllCompounds")
+.WithName("GetCompounds")
 .WithOpenApi();
 
-compoundsGroup.MapGet("/{id}", (string id, ICompoundRepository repo) =>
+app.MapGet("/api/compounds/{id}", (string id, ICompoundRepository repo) =>
 {
     ChemicalCompound? c = repo.GetById(id);
     if (c is null)
-        return Results.NotFound(new { Error = $"Compound '{id}' was not found." });
+        return Results.NotFound(new { error = $"Compound '{id}' not found." });
 
-    double tbK = c.GetNormalBoilingPointKelvin();
+    double tbKelvin = c.GetNormalBoilingPointKelvin();
     return Results.Ok(new CompoundSummaryDto(
         c.Id,
         c.Name,
@@ -85,146 +73,119 @@ compoundsGroup.MapGet("/{id}", (string id, ICompoundRepository repo) =>
         c.MolarMass,
         c.CriticalTemperatureKelvin,
         c.CriticalPressureKpa,
-        Math.Round(tbK, 2),
-        Math.Round(tbK - 273.15, 2)
+        Math.Round(tbKelvin, 2),
+        Math.Round(tbKelvin - 273.15, 2)
     ));
 })
 .WithName("GetCompoundById")
 .WithOpenApi();
 
-// ============================================================================
-// THERMODYNAMICS ENDPOINTS (/api/thermo)
-// ============================================================================
-var thermoGroup = app.MapGroup("/api/thermo").WithTags("Thermodynamics & VLE (Rachford-Rice)");
-
-thermoGroup.MapPost("/flash", (
+app.MapPost("/api/thermo/flash", (
     FlashCalculationRequest request,
     ICompoundRepository compoundRepo,
     IThermodynamicPackage thermo) =>
 {
-    try
-    {
-        IReadOnlyList<ChemicalCompound> compounds = compoundRepo.GetByIds(request.CompoundIds);
-        FlashResult flash = thermo.CalculateIsothermalFlash(
-            compounds,
-            request.CompositionZ,
-            request.TemperatureKelvin,
-            request.PressureKpa);
+    IReadOnlyList<ChemicalCompound> compounds = compoundRepo.GetByIds(request.CompoundIds);
+    FlashResult result = thermo.CalculateIsothermalFlash(
+        compounds,
+        request.CompositionZ,
+        request.TemperatureKelvin,
+        request.PressureKpa);
 
-        return Results.Ok(new FlashCalculationResponse(
-            ThermodynamicModel: thermo.Name,
-            Phase: flash.Phase.ToString(),
-            TemperatureKelvin: flash.TemperatureKelvin,
-            TemperatureCelsius: Math.Round(flash.TemperatureKelvin - 273.15, 2),
-            PressureKpa: flash.PressureKpa,
-            VaporFractionBeta: Math.Round(flash.VaporFractionBeta, 6),
-            CompoundIds: compounds.Select(c => c.Id).ToList(),
-            OverallCompositionZ: flash.OverallCompositionZ,
-            LiquidCompositionX: flash.LiquidCompositionX.Select(x => Math.Round(x, 6)).ToList(),
-            VaporCompositionY: flash.VaporCompositionY.Select(y => Math.Round(y, 6)).ToList(),
-            KValues: flash.KValues.Select(k => Math.Round(k, 6)).ToList(),
-            MolarEnthalpyJPerMol: Math.Round(flash.MolarEnthalpyJPerMol, 2),
-            Iterations: flash.Iterations
-        ));
-    }
-    catch (Exception ex) when (ex is KeyNotFoundException or ArgumentException)
-    {
-        return Results.BadRequest(new { Error = ex.Message });
-    }
+    return Results.Ok(new FlashCalculationResponse(
+        ThermodynamicModel: thermo.Name,
+        Phase: result.Phase.ToString(),
+        TemperatureKelvin: result.TemperatureKelvin,
+        TemperatureCelsius: Math.Round(result.TemperatureKelvin - 273.15, 2),
+        PressureKpa: result.PressureKpa,
+        VaporFractionBeta: Math.Round(result.VaporFractionBeta, 6),
+        CompoundIds: compounds.Select(c => c.Id).ToList(),
+        OverallCompositionZ: result.OverallCompositionZ,
+        LiquidCompositionX: result.LiquidCompositionX,
+        VaporCompositionY: result.VaporCompositionY,
+        KValues: result.KValues,
+        MolarEnthalpyJPerMol: Math.Round(result.MolarEnthalpyJPerMol, 2),
+        Iterations: result.Iterations
+    ));
 })
 .WithName("CalculateIsothermalFlash")
 .WithOpenApi();
 
-thermoGroup.MapPost("/txy-diagram", (
+app.MapPost("/api/thermo/txy", (
     BinaryTxyDiagramRequest request,
     ICompoundRepository compoundRepo,
     IThermodynamicPackage thermo) =>
 {
-    try
+    IReadOnlyList<ChemicalCompound> binary = compoundRepo.GetByIds([request.LightCompoundId, request.HeavyCompoundId]);
+    int steps = Math.Clamp(request.Steps, 2, 101);
+    var points = new List<TxyDiagramPointDto>(steps);
+
+    for (int i = 0; i < steps; i++)
     {
-        IReadOnlyList<ChemicalCompound> pair = compoundRepo.GetByIds([request.LightCompoundId, request.HeavyCompoundId]);
-        int steps = Math.Clamp(request.Steps, 2, 101);
-        var points = new List<TxyDiagramPointDto>(steps);
+        double x1 = (double)i / (steps - 1);
+        double[] x = [x1, 1.0 - x1];
 
-        for (int i = 0; i < steps; i++)
-        {
-            double x1 = (double)i / (steps - 1);
-            double[] x = [x1, 1.0 - x1];
+        double tBubble = thermo.CalculateBubblePointTemperatureKelvin(binary, x, request.PressureKpa);
+        double tDew = thermo.CalculateDewPointTemperatureKelvin(binary, x, request.PressureKpa);
+        double[] kAtBubble = thermo.CalculateKValues(binary, x, tBubble, request.PressureKpa);
+        double y1 = Math.Clamp(x1 * kAtBubble[0], 0.0, 1.0);
 
-            double tBubble = thermo.CalculateBubblePointTemperatureKelvin(pair, x, request.PressureKpa);
-            double tDew = thermo.CalculateDewPointTemperatureKelvin(pair, x, request.PressureKpa);
-            double[] kAtBubble = thermo.CalculateKValues(pair, x, tBubble, request.PressureKpa);
-            double y1 = Math.Clamp(x1 * kAtBubble[0], 0.0, 1.0);
-
-            points.Add(new TxyDiagramPointDto(
-                MoleFractionLight: Math.Round(x1, 4),
-                BubbleTemperatureKelvin: Math.Round(tBubble, 3),
-                DewTemperatureKelvin: Math.Round(tDew, 3),
-                EquilibriumVaporFractionLightY: Math.Round(y1, 4)
-            ));
-        }
-
-        return Results.Ok(points);
+        points.Add(new TxyDiagramPointDto(
+            MoleFractionLight: Math.Round(x1, 4),
+            BubbleTemperatureKelvin: Math.Round(tBubble, 2),
+            DewTemperatureKelvin: Math.Round(tDew, 2),
+            EquilibriumVaporFractionLightY: Math.Round(y1, 4)
+        ));
     }
-    catch (Exception ex) when (ex is KeyNotFoundException or ArgumentException)
-    {
-        return Results.BadRequest(new { Error = ex.Message });
-    }
+
+    return Results.Ok(points);
 })
 .WithName("GenerateBinaryTxyDiagram")
 .WithOpenApi();
 
-// ============================================================================
-// PROCESS FLOWSHEET SIMULATION ENDPOINTS (/api/simulations)
-// ============================================================================
-var simGroup = app.MapGroup("/api/simulations").WithTags("Process Flowsheet DAG & SQL History");
-
-simGroup.MapPost("/benchmark", (
+app.MapPost("/api/simulations/benchmark", (
     BenchmarkSimulationRequest request,
     ICompoundRepository compoundRepo,
     ISimulationHistoryRepository historyRepo,
     IThermodynamicPackage thermo) =>
 {
-    try
-    {
-        IReadOnlyList<ChemicalCompound> compounds = compoundRepo.GetByIds(["C6H6", "C7H8"]);
+    IReadOnlyList<ChemicalCompound> compounds = compoundRepo.GetByIds(["C6H6", "C7H8"]);
 
-        var feed1 = new MaterialStream("S-101", "Benzene-Rich Feed", compounds,
-            request.BenzeneFeedFlowMolPerSec, request.BenzeneFeedTemperatureKelvin, 120.0, [0.90, 0.10]);
-        var feed2 = new MaterialStream("S-102", "Toluene-Rich Feed", compounds,
-            request.TolueneFeedFlowMolPerSec, request.TolueneFeedTemperatureKelvin, 120.0, [0.10, 0.90]);
-        var mixed = new MaterialStream("S-103", "Mixed Stream", compounds);
-        var heated = new MaterialStream("S-104", "Preheated Feed", compounds);
-        var vaporProduct = new MaterialStream("S-105", "Overhead Vapor Product", compounds);
-        var liquidProduct = new MaterialStream("S-106", "Bottoms Liquid Product", compounds);
+    var feedBenzene = new MaterialStream(
+        "S-101", "Rich Benzene Feed", compounds,
+        request.BenzeneFeedFlowMolPerSec, request.BenzeneFeedTemperatureKelvin, 120.0, [0.90, 0.10]);
 
-        double pressureDrop = Math.Max(0.0, 120.0 - request.FlashDrumPressureKpa);
+    var feedToluene = new MaterialStream(
+        "S-102", "Rich Toluene Feed", compounds,
+        request.TolueneFeedFlowMolPerSec, request.TolueneFeedTemperatureKelvin, 120.0, [0.10, 0.90]);
 
-        var mixer = new Mixer("MIX-101", "Adiabatic Feed Mixer", [feed1, feed2], mixed);
-        var heater = new HeaterCooler("E-101", "Feed Preheater", mixed, heated,
-            request.PreheaterTargetTemperatureKelvin, pressureDrop);
-        var flashDrum = new FlashDrum("V-101", "VLE Flash Separator", heated, vaporProduct, liquidProduct);
+    var mixedStream = new MaterialStream("S-103", "Mixed Feed", compounds);
+    var heatedStream = new MaterialStream("S-104", "Preheated Flash Feed", compounds);
+    var vaporProduct = new MaterialStream("S-105", "Overhead Benzene-Rich Vapor", compounds);
+    var liquidProduct = new MaterialStream("S-106", "Bottoms Toluene-Rich Liquid", compounds);
 
-        var flowsheet = new ProcessFlowsheet("Benzene-Toluene Flash Separation Plant", thermo);
-        flowsheet.AddUnit(flashDrum);
-        flowsheet.AddUnit(heater);
-        flowsheet.AddUnit(mixer);
+    var mixer = new Mixer("M-100", "Feed Mixer", [feedBenzene, feedToluene], mixedStream);
+    var preheater = new HeaterCooler("E-100", "Feed Preheater", mixedStream, heatedStream, request.PreheaterTargetTemperatureKelvin, pressureDropKpa: 5.0);
+    var flashDrum = new FlashDrum("V-100", "VLE Flash Separator", heatedStream, vaporProduct, liquidProduct, operatingPressureKpa: request.FlashDrumPressureKpa);
 
-        IReadOnlyList<IUnitOperation> executedOrder = flowsheet.Solve();
-        long savedRunId = historyRepo.SaveSimulationRun(flowsheet, executedOrder);
+    var flowsheet = new ProcessFlowsheet("Benzene-Toluene Flash Separation Plant", thermo);
+    flowsheet.AddUnit(mixer);
+    flowsheet.AddUnit(preheater);
+    flowsheet.AddUnit(flashDrum);
 
-        var unitsDto = executedOrder.Select(u => new UnitResultDto(
-            u.Id,
-            u.Name,
-            u.UnitType,
-            Math.Round(u.EnergyDutyWatts / 1000.0, 3)
-        )).ToList();
+    IReadOnlyList<IUnitOperation> executedOrder = flowsheet.Solve();
+    long runId = historyRepo.SaveSimulationRun(flowsheet, executedOrder);
 
-        var streamsDto = flowsheet.Streams.Select(s =>
+    var unitDtos = executedOrder
+        .Select(u => new UnitResultDto(u.Id, u.Name, u.UnitType, Math.Round(u.EnergyDutyWatts / 1000.0, 3)))
+        .ToList();
+
+    var streamDtos = flowsheet.Streams
+        .Select(s =>
         {
             var fractions = new Dictionary<string, double>();
-            for (int i = 0; i < compounds.Count; i++)
-                fractions[compounds[i].Id] = Math.Round(s.CompositionZ[i], 5);
+            for (int i = 0; i < s.Compounds.Count; i++)
+                fractions[s.Compounds[i].Id] = Math.Round(s.CompositionZ[i], 4);
 
             return new StreamStateDto(
                 s.Id,
@@ -233,46 +194,38 @@ simGroup.MapPost("/benchmark", (
                 Math.Round(s.MolarFlowRateMolPerSec, 4),
                 Math.Round(s.TemperatureKelvin, 2),
                 Math.Round(s.TemperatureKelvin - 273.15, 2),
-                Math.Round(s.PressureKpa, 3),
-                Math.Round(s.VaporFractionBeta, 5),
+                Math.Round(s.PressureKpa, 2),
+                Math.Round(s.VaporFractionBeta, 4),
                 Math.Round(s.MolarEnthalpyJPerMol, 2),
                 Math.Round(s.TotalEnthalpyFlowWatts / 1000.0, 3),
                 fractions
             );
-        }).ToList();
+        })
+        .ToList();
 
-        return Results.Ok(new PlantSimulationResponse(
-            SavedSimulationRunId: savedRunId,
-            FlowsheetName: flowsheet.Name,
-            ThermodynamicModel: thermo.Name,
-            TopologicalExecutionOrder: executedOrder.Select(u => u.Id).ToList(),
-            Units: unitsDto,
-            Streams: streamsDto
-        ));
-    }
-    catch (Exception ex)
-    {
-        return Results.BadRequest(new { Error = ex.Message });
-    }
+    return Results.Ok(new PlantSimulationResponse(
+        SavedSimulationRunId: runId,
+        FlowsheetName: flowsheet.Name,
+        ThermodynamicModel: thermo.Name,
+        TopologicalExecutionOrder: executedOrder.Select(u => u.Id).ToList(),
+        Units: unitDtos,
+        Streams: streamDtos
+    ));
 })
-.WithName("RunBenchmarkPlantSimulation")
+.WithName("RunBenchmarkSimulation")
 .WithOpenApi();
 
-simGroup.MapGet("/history", (ISimulationHistoryRepository historyRepo) =>
-{
-    return Results.Ok(historyRepo.GetRecentRuns());
-})
-.WithName("GetSimulationHistory")
+app.MapGet("/api/simulations", (ISimulationHistoryRepository historyRepo) =>
+    Results.Ok(historyRepo.GetRecentRuns(20)))
+.WithName("GetRecentSimulations")
 .WithOpenApi();
 
-simGroup.MapGet("/history/{id:long}", (long id, ISimulationHistoryRepository historyRepo) =>
+app.MapGet("/api/simulations/{id:long}", (long id, ISimulationHistoryRepository historyRepo) =>
 {
-    SimulationRunRecord? record = historyRepo.GetById(id);
-    return record is not null ? Results.Ok(record) : Results.NotFound();
+    SimulationRunRecord? run = historyRepo.GetById(id);
+    return run is not null ? Results.Ok(run) : Results.NotFound(new { error = $"Simulation run {id} not found." });
 })
-.WithName("GetSimulationRunById")
+.WithName("GetSimulationById")
 .WithOpenApi();
 
 app.Run();
-
-public partial class Program { }

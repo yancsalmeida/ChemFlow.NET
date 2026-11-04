@@ -1,5 +1,7 @@
 # ChemFlow.NET
 
+[![.NET CI](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml)
+
 **Modular Steady-State Chemical Process & Thermodynamic Simulation Engine in C# / .NET 8**
 
 `ChemFlow.NET` is a domain-driven process simulation engine built with **C# 12** and **.NET 8** following **Clean Architecture** principles. It models vapor-liquid equilibrium (VLE), mass and enthalpy balances, unit operations, and directed acyclic graph (DAG) process flowsheets with relational persistence in **SQLite**.
@@ -13,7 +15,7 @@ ChemFlow.NET/
 ├── src/
 │   ├── ChemFlow.Domain/           # Pure domain models, thermodynamics, unit operations & DAG flowsheet engine
 │   ├── ChemFlow.Infrastructure/   # Relational SQLite persistence (ADO.NET / Microsoft.Data.Sqlite)
-│   └── ChemFlow.Api/              # ASP.NET Core Web API contracts & endpoints
+│   └── ChemFlow.Api/              # ASP.NET Core Minimal API endpoints & OpenAPI/Swagger
 └── tests/
     └── ChemFlow.Tests/            # Automated unit & integration test suite (xUnit)
 ```
@@ -33,9 +35,14 @@ ChemFlow.NET/
 - **`ConversionReactor`:** Stoichiometric reactor with limiting-reactant validation, fractional conversion, and heat of reaction ($\Delta H_{\text{rxn}}^\circ$) energy balance.
 - **`ProcessFlowsheet`:** Models the plant as a Directed Acyclic Graph (DAG) and resolves execution order automatically via **Kahn's Topological Sort Algorithm** ($O(V + E)$), detecting and rejecting recycle loops before execution.
 
-### 3. Relational Persistence (`ChemFlow.Infrastructure`)
+### 3. Relational Persistence & REST API (`ChemFlow.Infrastructure` & `ChemFlow.Api`)
 - Raw SQL persistence using `Microsoft.Data.Sqlite` (`ADO.NET`) with parameterized queries, foreign-key constraints, and transactional batch inserts (`SaveSimulationRun`).
-- Stores pure component physical properties (`compounds`) and full historical simulation runs (`simulation_runs`, `simulation_unit_results`, `simulation_stream_results`).
+- **ASP.NET Core Minimal API Endpoints:**
+  - `GET /api/compounds` & `GET /api/compounds/{id}` — Query pure-component physical and Antoine parameters from SQLite.
+  - `POST /api/thermo/flash` — Solve an isothermal $(T, P)$ Rachford-Rice flash for a multicomponent mixture.
+  - `POST /api/thermo/txy` — Generate binary $T\text{-}x\text{-}y$ phase equilibrium curves.
+  - `POST /api/simulations/benchmark` — Execute and persist the Benzene-Toluene flash separation flowsheet (`Mixer` $\rightarrow$ `HeaterCooler` $\rightarrow$ `FlashDrum`).
+  - `GET /api/simulations` & `GET /api/simulations/{id}` — Retrieve persisted simulation runs and stream states.
 
 ---
 
@@ -44,9 +51,10 @@ ChemFlow.NET/
 ### Prerequisites
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
-### Build & Run Tests
+### Build, Test & Run API
 
 ```bash
 dotnet build ChemFlow.sln
 dotnet test ChemFlow.sln
+dotnet run --project src/ChemFlow.Api
 ```

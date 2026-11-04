@@ -1,0 +1,29 @@
+name: .NET CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore ChemFlow.sln
+
+      - name: Build solution
+        run: dotnet build ChemFlow.sln --no-restore --configuration Release
+
+      - name: Run xUnit tests
+        run: dotnet test ChemFlow.sln --no-build --configuration Release --verbosity normal
