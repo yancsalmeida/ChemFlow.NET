@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace ChemFlow.Api.Contracts;
 
 public sealed record CompoundSummaryDto(
@@ -12,10 +14,10 @@ public sealed record CompoundSummaryDto(
 );
 
 public sealed record FlashCalculationRequest(
-    IReadOnlyList<string> CompoundIds,
-    IReadOnlyList<double> CompositionZ,
-    double TemperatureKelvin,
-    double PressureKpa
+    [property: DefaultValue(new[] { "C6H6", "C7H8" })] IReadOnlyList<string> CompoundIds,
+    [property: DefaultValue(new[] { 0.5, 0.5 })] IReadOnlyList<double> CompositionZ,
+    [property: DefaultValue(368.15)] double TemperatureKelvin = 368.15,
+    [property: DefaultValue(101.325)] double PressureKpa = 101.325
 );
 
 public sealed record FlashCalculationResponse(
@@ -35,10 +37,10 @@ public sealed record FlashCalculationResponse(
 );
 
 public sealed record BinaryTxyDiagramRequest(
-    string LightCompoundId,
-    string HeavyCompoundId,
-    double PressureKpa = 101.325,
-    int Steps = 11
+    [property: DefaultValue("C6H6")] string LightCompoundId = "C6H6",
+    [property: DefaultValue("C7H8")] string HeavyCompoundId = "C7H8",
+    [property: DefaultValue(101.325)] double PressureKpa = 101.325,
+    [property: DefaultValue(11)] int Steps = 11
 );
 
 public sealed record TxyDiagramPointDto(
@@ -49,12 +51,12 @@ public sealed record TxyDiagramPointDto(
 );
 
 public sealed record BenchmarkSimulationRequest(
-    double BenzeneFeedFlowMolPerSec = 50.0,
-    double BenzeneFeedTemperatureKelvin = 300.0,
-    double TolueneFeedFlowMolPerSec = 50.0,
-    double TolueneFeedTemperatureKelvin = 310.0,
-    double PreheaterTargetTemperatureKelvin = 368.15,
-    double FlashDrumPressureKpa = 101.325
+    [property: DefaultValue(50.0)] double BenzeneFeedFlowMolPerSec = 50.0,
+    [property: DefaultValue(300.0)] double BenzeneFeedTemperatureKelvin = 300.0,
+    [property: DefaultValue(50.0)] double TolueneFeedFlowMolPerSec = 50.0,
+    [property: DefaultValue(310.0)] double TolueneFeedTemperatureKelvin = 310.0,
+    [property: DefaultValue(368.15)] double PreheaterTargetTemperatureKelvin = 368.15,
+    [property: DefaultValue(101.325)] double FlashDrumPressureKpa = 101.325
 );
 
 public sealed record StreamStateDto(
