@@ -590,14 +590,22 @@
         body: JSON.stringify(payload)
       });
       const data = await res.json();
+      renderPlantData(data);
+      const s4 = data.streams.find(s => s.id === 'S-104');
+      await loadTxyDiagram(s4.moleFractions['C6H6'], s4.temperatureKelvin);
+    }
 
+    function renderPlantData(data) {
       const heater = data.units.find(u => u.unitType === 'HeaterCooler');
       const s4 = data.streams.find(s => s.id === 'S-104');
       const s5 = data.streams.find(s => s.id === 'S-105');
       const s6 = data.streams.find(s => s.id === 'S-106');
+      const drumBeta = s4.molarFlowRateMolPerSec > 0
+        ? s5.molarFlowRateMolPerSec / s4.molarFlowRateMolPerSec
+        : 0;
 
       els.kpiDuty.textContent = `${heater.energyDutyKilowatts.toFixed(1)} kW`;
-      els.kpiBeta.textContent = s4.vaporFractionBeta.toFixed(4);
+      els.kpiBeta.textContent = drumBeta.toFixed(4);
       els.kpiVaporY.textContent = `${(s5.moleFractions['C6H6'] * 100).toFixed(1)}%`;
       els.kpiRunId.textContent = `#${data.savedSimulationRunId}`;
 
@@ -619,8 +627,6 @@
           <td>${(s.moleFractions['C7H8'] ?? 0).toFixed(4)}</td>
         </tr>
       `).join('');
-
-      await loadTxyDiagram(s4.moleFractions['C6H6'], s4.temperatureKelvin);
     }
 
     async function loadTxyDiagram(operatingZ1 = 0.5, operatingT = 368.15) {
@@ -738,6 +744,33 @@
     els.selLight.addEventListener('change', () => loadTxyDiagram());
     els.selHeavy.addEventListener('change', () => loadTxyDiagram());
     els.btnSimulate.addEventListener('click', runPlantSimulation);
+
+    updateLabels();
+    renderPlantData({
+      savedSimulationRunId: 1,
+      units: [{ id: "E-100", unitType: "HeaterCooler", energyDutyKilowatts: 921.835 }],
+      streams: [
+        { id: "S-101", name: "Rich Benzene Feed", phase: "SubcooledLiquid", molarFlowRateMolPerSec: 50, temperatureKelvin: 300, temperatureCelsius: 26.85, pressureKpa: 120, vaporFractionBeta: 0, totalEnthalpyFlowKilowatts: 12.78, moleFractions: { C6H6: 0.9, C7H8: 0.1 } },
+        { id: "S-102", name: "Rich Toluene Feed", phase: "SubcooledLiquid", molarFlowRateMolPerSec: 50, temperatureKelvin: 310, temperatureCelsius: 36.85, pressureKpa: 120, vaporFractionBeta: 0, totalEnthalpyFlowKilowatts: 91.94, moleFractions: { C6H6: 0.1, C7H8: 0.9 } },
+        { id: "S-103", name: "Mixed Feed", phase: "SubcooledLiquid", molarFlowRateMolPerSec: 100, temperatureKelvin: 305.29, temperatureCelsius: 32.14, pressureKpa: 120, vaporFractionBeta: 0, totalEnthalpyFlowKilowatts: 104.72, moleFractions: { C6H6: 0.5, C7H8: 0.5 } },
+        { id: "S-104", name: "Preheated Flash Feed", phase: "SubcooledLiquid", molarFlowRateMolPerSec: 100, temperatureKelvin: 368.15, temperatureCelsius: 95.0, pressureKpa: 115, vaporFractionBeta: 0, totalEnthalpyFlowKilowatts: 1026.55, moleFractions: { C6H6: 0.5, C7H8: 0.5 } },
+        { id: "S-105", name: "Overhead Benzene-Rich Vapor", phase: "VaporLiquidEquilibrium", molarFlowRateMolPerSec: 44.03, temperatureKelvin: 368.15, temperatureCelsius: 95.0, pressureKpa: 101.32, vaporFractionBeta: 1, totalEnthalpyFlowKilowatts: 1671.92, moleFractions: { C6H6: 0.6243, C7H8: 0.3757 } },
+        { id: "S-106", name: "Bottoms Toluene-Rich Liquid", phase: "SubcooledLiquid", molarFlowRateMolPerSec: 55.97, temperatureKelvin: 368.15, temperatureCelsius: 95.0, pressureKpa: 101.32, vaporFractionBeta: 0, totalEnthalpyFlowKilowatts: 582.72, moleFractions: { C6H6: 0.4022, C7H8: 0.5978 } }
+      ]
+    });
+    drawTxyChart([
+      { moleFractionLight: 0.0, bubbleTemperatureKelvin: 383.74, dewTemperatureKelvin: 383.74, equilibriumVaporFractionLightY: 0.0 },
+      { moleFractionLight: 0.1, bubbleTemperatureKelvin: 379.24, dewTemperatureKelvin: 381.66, equilibriumVaporFractionLightY: 0.2093 },
+      { moleFractionLight: 0.2, bubbleTemperatureKelvin: 375.20, dewTemperatureKelvin: 379.45, equilibriumVaporFractionLightY: 0.3763 },
+      { moleFractionLight: 0.3, bubbleTemperatureKelvin: 371.54, dewTemperatureKelvin: 377.10, equilibriumVaporFractionLightY: 0.5114 },
+      { moleFractionLight: 0.4, bubbleTemperatureKelvin: 368.22, dewTemperatureKelvin: 374.58, equilibriumVaporFractionLightY: 0.6221 },
+      { moleFractionLight: 0.5, bubbleTemperatureKelvin: 365.18, dewTemperatureKelvin: 371.87, equilibriumVaporFractionLightY: 0.7139 },
+      { moleFractionLight: 0.6, bubbleTemperatureKelvin: 362.39, dewTemperatureKelvin: 368.91, equilibriumVaporFractionLightY: 0.7908 },
+      { moleFractionLight: 0.7, bubbleTemperatureKelvin: 359.82, dewTemperatureKelvin: 365.66, equilibriumVaporFractionLightY: 0.8557 },
+      { moleFractionLight: 0.8, bubbleTemperatureKelvin: 357.44, dewTemperatureKelvin: 362.04, equilibriumVaporFractionLightY: 0.9112 },
+      { moleFractionLight: 0.9, bubbleTemperatureKelvin: 355.22, dewTemperatureKelvin: 357.93, equilibriumVaporFractionLightY: 0.9588 },
+      { moleFractionLight: 1.0, bubbleTemperatureKelvin: 353.15, dewTemperatureKelvin: 353.15, equilibriumVaporFractionLightY: 1.0 }
+    ], 'C6H6', 0.5, 368.15);
 
     runPlantSimulation();
   </script>

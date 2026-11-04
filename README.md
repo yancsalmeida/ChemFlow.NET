@@ -6,6 +6,8 @@
 
 `ChemFlow.NET` is a domain-driven process simulation engine built with **C# 12** and **.NET 8** following **Clean Architecture** principles. It models vapor-liquid equilibrium (VLE), mass and enthalpy balances, unit operations, and directed acyclic graph (DAG) process flowsheets with relational persistence in **SQLite**.
 
+![ChemFlow.NET — Process Simulation & Thermodynamics Studio](docs/chemflow-studio-preview.png)
+
 ---
 
 ## Architecture & Project Structure
