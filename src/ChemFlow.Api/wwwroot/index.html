@@ -318,6 +318,125 @@
       border: 1px solid var(--border);
       border-radius: 8px;
     }
+
+    /* Tab Bar Navigation */
+    .tab-nav {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+      margin-bottom: 0.85rem;
+    }
+
+    .tab-btn {
+      background: transparent;
+      color: var(--text-secondary);
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: var(--font-sans);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .tab-btn.active {
+      color: var(--accent-blue);
+      border-bottom-color: var(--accent-blue);
+    }
+
+    /* Graphviz DOT Container */
+    .dot-view-container {
+      background: #080c14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem;
+      position: relative;
+    }
+
+    .dot-code-pre {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: #e2e8f0;
+      max-height: 280px;
+      overflow-y: auto;
+      white-space: pre;
+      line-height: 1.45;
+    }
+
+    .dot-actions {
+      display: flex;
+      gap: 0.5rem;
+      position: absolute;
+      top: 0.6rem;
+      right: 0.6rem;
+    }
+
+    .btn-secondary {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--accent-blue);
+      padding: 0.28rem 0.65rem;
+      border-radius: 5px;
+      font-size: 0.73rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.12);
+    }
+
+    /* Balance Closure Section */
+    .balance-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .badge-pass {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      display: inline-block;
+    }
+
+    .badge-fail {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #fb7185;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      display: inline-block;
+    }
+
+    .sub-panel-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 1rem 0 0.45rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
   </style>
 </head>
 <body>
@@ -400,88 +519,109 @@
     <!-- Right Workspace: PFD + VLE Chart + Stream Table -->
     <section class="workspace">
       <div class="top-grid">
-        <!-- PFD Flowsheet Diagram -->
+        <!-- PFD Flowsheet Diagram & Graphviz DOT Tabs -->
         <div class="panel">
           <div class="panel-header">
-            <h2>Process Flow Diagram (DAG Topological Order)</h2>
-            <span id="dagOrderBadge" style="font-family: var(--font-mono); font-size: 0.76rem; color: #34d399;">
-              Order: MIX-101 &rarr; E-101 &rarr; V-101
-            </span>
-          </div>
-
-          <div class="kpi-row">
-            <div class="kpi-card">
-              <div class="label">Preheater Duty (E-101)</div>
-              <div class="value" id="kpiDuty">-- kW</div>
-            </div>
-            <div class="kpi-card">
-              <div class="label">Flash Vapor Fraction (&beta;)</div>
-              <div class="value" id="kpiBeta">--</div>
-            </div>
-            <div class="kpi-card">
-              <div class="label">Overhead Benzene y₁</div>
-              <div class="value" id="kpiVaporY">--</div>
-            </div>
-            <div class="kpi-card">
-              <div class="label">SQL Run ID</div>
-              <div class="value" id="kpiRunId">#--</div>
+            <h2>Process Flow Diagram (DAG Topology)</h2>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <span id="dagOrderBadge" style="font-family: var(--font-mono); font-size: 0.76rem; color: #34d399;">
+                Order: M-100 &rarr; E-100 &rarr; V-100
+              </span>
+              <a id="lnkDotApi" href="/api/simulations/2/topology?format=dot" target="_blank" class="btn-secondary" style="text-decoration:none;">GET .dot &rarr;</a>
             </div>
           </div>
 
-          <div class="pfd-container">
-            <svg viewBox="0 0 680 235" width="100%" height="235">
-              <defs>
-                <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
-                </marker>
-                <marker id="arrow-vap" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb7185" />
-                </marker>
-              </defs>
+          <div class="tab-nav">
+            <button class="tab-btn active" id="tabBtnPfd">Interactive Vector PFD</button>
+            <button class="tab-btn" id="tabBtnDot">Graphviz DOT Syntax</button>
+          </div>
 
-              <!-- S-101 & S-102 Feed Pipes -->
-              <line x1="25" y1="70" x2="125" y2="98" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
-              <text x="28" y="58" fill="#94a3b8" font-family="monospace" font-size="11">S-101 (Benzene)</text>
+          <div id="pfdDiagramTab">
+            <div class="kpi-row">
+              <div class="kpi-card">
+                <div class="label">Preheater Duty (E-100)</div>
+                <div class="value" id="kpiDuty">-- kW</div>
+              </div>
+              <div class="kpi-card">
+                <div class="label">Flash Vapor Fraction (&beta;)</div>
+                <div class="value" id="kpiBeta">--</div>
+              </div>
+              <div class="kpi-card">
+                <div class="label">Overhead Benzene y₁</div>
+                <div class="value" id="kpiVaporY">--</div>
+              </div>
+              <div class="kpi-card">
+                <div class="label">SQL Run ID</div>
+                <div class="value" id="kpiRunId">#--</div>
+              </div>
+            </div>
 
-              <line x1="25" y1="165" x2="125" y2="132" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
-              <text x="28" y="185" fill="#94a3b8" font-family="monospace" font-size="11">S-102 (Toluene)</text>
+            <div class="pfd-container">
+              <svg viewBox="0 0 680 235" width="100%" height="235" id="pfdSvg">
+                <defs>
+                  <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+                  </marker>
+                  <marker id="arrow-vap" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb7185" />
+                  </marker>
+                </defs>
 
-              <!-- MIX-101 Block -->
-              <rect x="130" y="82" width="86" height="66" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2" />
-              <text x="173" y="108" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="12">MIX-101</text>
-              <text x="173" y="125" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="10">Adiabatic Mixer</text>
-              <text x="173" y="141" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">DAG Step #1</text>
+                <!-- S-101 & S-102 Feed Pipes -->
+                <line x1="25" y1="70" x2="125" y2="98" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+                <text x="28" y="58" fill="#94a3b8" font-family="monospace" font-size="11" id="svgFeed1Label">S-101 (Benzene)</text>
 
-              <!-- S-103 Pipe -->
-              <line x1="216" y1="115" x2="288" y2="115" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
-              <text x="252" y="105" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10">S-103</text>
+                <line x1="25" y1="165" x2="125" y2="132" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+                <text x="28" y="185" fill="#94a3b8" font-family="monospace" font-size="11" id="svgFeed2Label">S-102 (Toluene)</text>
 
-              <!-- E-101 Heater Block -->
-              <circle cx="332" cy="115" r="38" fill="#1e293b" stroke="#f59e0b" stroke-width="2" />
-              <path d="M 312 115 L 322 103 L 332 127 L 342 103 L 352 115" fill="none" stroke="#f59e0b" stroke-width="2" />
-              <text x="332" y="92" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="11">E-101</text>
-              <text x="332" y="143" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">DAG #2</text>
-              <text x="332" y="172" text-anchor="middle" fill="#fbbf24" font-family="monospace" font-size="11" id="svgHeaterDuty">+Q kW</text>
+                <!-- M-100 Mixer Block -->
+                <rect x="130" y="82" width="86" height="66" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2" />
+                <text x="173" y="108" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="12">M-100</text>
+                <text x="173" y="125" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="10">Feed Mixer</text>
+                <text x="173" y="141" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">Q = 0 kW</text>
 
-              <!-- S-104 Pipe -->
-              <line x1="370" y1="115" x2="445" y2="115" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrow)" />
-              <text x="408" y="105" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10">S-104</text>
+                <!-- S-103 Pipe -->
+                <line x1="216" y1="115" x2="288" y2="115" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+                <text x="252" y="105" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10" id="svgMixedLabel">S-103</text>
 
-              <!-- V-101 Flash Drum Vessel -->
-              <rect x="452" y="52" width="76" height="126" rx="34" fill="#1e293b" stroke="#10b981" stroke-width="2.2" />
-              <line x1="454" y1="125" x2="526" y2="125" stroke="#38bdf8" stroke-dasharray="4 3" stroke-width="1.5" />
-              <text x="490" y="92" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="12">V-101</text>
-              <text x="490" y="109" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="10">Flash Drum</text>
-              <text x="490" y="148" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">DAG Step #3</text>
+                <!-- E-100 Preheater Block -->
+                <circle cx="332" cy="115" r="38" fill="#1e293b" stroke="#f59e0b" stroke-width="2" />
+                <path d="M 312 115 L 322 103 L 332 127 L 342 103 L 352 115" fill="none" stroke="#f59e0b" stroke-width="2" />
+                <text x="332" y="92" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="11">E-100</text>
+                <text x="332" y="143" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9">Heater</text>
+                <text x="332" y="172" text-anchor="middle" fill="#fbbf24" font-family="monospace" font-size="11" id="svgHeaterDuty">+Q kW</text>
 
-              <!-- S-105 Overhead Vapor Pipe -->
-              <path d="M 490 52 L 490 28 L 645 28" fill="none" stroke="#fb7185" stroke-width="2.5" marker-end="url(#arrow-vap)" />
-              <text x="572" y="21" text-anchor="middle" fill="#fb7185" font-family="monospace" font-size="11" id="svgVapLabel">S-105 Overhead Vapor</text>
+                <!-- S-104 Pipe -->
+                <line x1="370" y1="115" x2="445" y2="115" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrow)" />
+                <text x="408" y="105" text-anchor="middle" fill="#94a3b8" font-family="monospace" font-size="10" id="svgPreheatedLabel">S-104</text>
 
-              <!-- S-106 Bottoms Liquid Pipe -->
-              <path d="M 490 178 L 490 202 L 645 202" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
-              <text x="572" y="195" text-anchor="middle" fill="#38bdf8" font-family="monospace" font-size="11" id="svgLiqLabel">S-106 Bottoms Liquid</text>
-            </svg>
+                <!-- V-100 Flash Drum Vessel -->
+                <rect x="452" y="52" width="76" height="126" rx="34" fill="#1e293b" stroke="#10b981" stroke-width="2.2" />
+                <line x1="454" y1="125" x2="526" y2="125" stroke="#38bdf8" stroke-dasharray="4 3" stroke-width="1.5" />
+                <text x="490" y="88" text-anchor="middle" fill="#f8fafc" font-family="monospace" font-weight="bold" font-size="12">V-100</text>
+                <text x="490" y="104" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="10">Flash Drum</text>
+                <text x="490" y="142" text-anchor="middle" fill="#34d399" font-family="monospace" font-size="9" id="svgDrumDuty">Q_flash</text>
+                <text x="490" y="156" text-anchor="middle" fill="#fbbf24" font-family="monospace" font-size="9" id="svgDrumBeta">&beta; = 0.45</text>
+
+                <!-- S-105 Overhead Vapor Pipe -->
+                <path d="M 490 52 L 490 28 L 645 28" fill="none" stroke="#fb7185" stroke-width="2.5" marker-end="url(#arrow-vap)" />
+                <text x="572" y="21" text-anchor="middle" fill="#fb7185" font-family="monospace" font-size="11" id="svgVapLabel">S-105 Overhead Vapor</text>
+
+                <!-- S-106 Bottoms Liquid Pipe -->
+                <path d="M 490 178 L 490 202 L 645 202" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+                <text x="572" y="195" text-anchor="middle" fill="#38bdf8" font-family="monospace" font-size="11" id="svgLiqLabel">S-106 Bottoms Liquid</text>
+              </svg>
+            </div>
+          </div>
+
+          <div id="pfdDotTab" style="display: none;">
+            <div class="dot-view-container">
+              <div class="dot-actions">
+                <button class="btn-secondary" id="btnCopyDot">Copy DOT Code</button>
+                <button class="btn-secondary" id="btnDownloadDot">Download .dot</button>
+              </div>
+              <pre class="dot-code-pre" id="dotCodeView">// Graphviz DOT representation will appear here...</pre>
+            </div>
           </div>
         </div>
 
@@ -525,10 +665,108 @@
           </table>
         </div>
       </div>
+
+      <!-- Mass & Energy Balance Closure Verification Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Mass &amp; Energy Balance Closure Verification (First Law of Thermodynamics)</h2>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <span id="badgeMassConserved" class="badge-pass">Mass Conserved (&le; 1e-6)</span>
+            <span id="badgeEnergyConserved" class="badge-pass">Energy Conserved (&le; 1e-5)</span>
+            <a id="lnkReportApi" href="/api/simulations/1/report" target="_blank" class="btn-secondary" style="text-decoration:none;">GET Report JSON &rarr;</a>
+          </div>
+        </div>
+
+        <!-- Global Balance KPIs -->
+        <div class="balance-kpi-grid">
+          <div class="kpi-card">
+            <div class="label">Total Mass Flow (&Sigma; In vs &Sigma; Out)</div>
+            <div class="value" id="kpiMassClosure">-- kg/s &rarr; -- kg/s</div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem;" id="kpiMassDelta">
+              &Delta;m: -- kg/s (0.0000%)
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="label">Total Molar Flow (&Sigma; In vs &Sigma; Out)</div>
+            <div class="value" id="kpiMolarClosure">-- mol/s &rarr; -- mol/s</div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem;" id="kpiMolarDelta">
+              &Delta;n: -- mol/s (0.0000%)
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="label">Boundary Enthalpy In + Added Heat</div>
+            <div class="value" id="kpiEnthalpyIn">-- kW + -- kW</div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem;" id="kpiDutyAdded">
+              Total In: -- kW
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="label">Total Enthalpy Imbalance (&Delta;H)</div>
+            <div class="value" id="kpiEnthalpyDelta">-- W</div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem;" id="kpiEnthalpyRelErr">
+              Relative &epsilon;_H: -- %
+            </div>
+          </div>
+        </div>
+
+        <!-- Pure-Component Species Conservation Breakdown Table -->
+        <div class="sub-panel-title">
+          <span>Component Species Conservation Closure (&Sigma; In = &Sigma; Out)</span>
+          <span style="font-weight: 400; text-transform: none; color: #94a3b8; font-size: 0.72rem;">Tolerance: 1.0e-6 kg/s</span>
+        </div>
+        <div class="table-wrap" style="margin-bottom: 1.25rem;">
+          <table>
+            <thead>
+              <tr>
+                <th>Compound</th>
+                <th>Formula / Name</th>
+                <th>Molar Mass (g/mol)</th>
+                <th>Feed Molar (mol/s)</th>
+                <th>Prod Molar (mol/s)</th>
+                <th>Feed Mass (kg/s)</th>
+                <th>Prod Mass (kg/s)</th>
+                <th>&Delta;m (kg/s)</th>
+                <th>Relative Err</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="componentTableBody"></tbody>
+          </table>
+        </div>
+
+        <!-- Unit-by-Unit Energy & Mass Balance Closure Table -->
+        <div class="sub-panel-title">
+          <span>Equipment Unit Operation Thermodynamic Balance (Local First Law &Delta;E = 0)</span>
+          <span style="font-weight: 400; text-transform: none; color: #94a3b8; font-size: 0.72rem;">&Sigma; In + Q = &Sigma; Out</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Unit ID</th>
+                <th>Name</th>
+                <th>Equipment Type</th>
+                <th>Inlet Mass (kg/s)</th>
+                <th>Outlet Mass (kg/s)</th>
+                <th>Mass &Delta;m (kg/s)</th>
+                <th>Inlet H (kW)</th>
+                <th>Outlet H (kW)</th>
+                <th>Duty Q (kW)</th>
+                <th>Enthalpy &Delta;H (W)</th>
+                <th>Closure Status</th>
+              </tr>
+            </thead>
+            <tbody id="unitTableBody"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
   </main>
 
   <script>
+    let currentDotCode = '';
+    let currentRunId = null;
+
     const els = {
       inpF1: document.getElementById('inpF1'),
       inpT1: document.getElementById('inpT1'),
@@ -554,8 +792,72 @@
       svgVapLabel: document.getElementById('svgVapLabel'),
       svgLiqLabel: document.getElementById('svgLiqLabel'),
       txySubtitle: document.getElementById('txySubtitle'),
-      txyCanvas: document.getElementById('txyCanvas')
+      txyCanvas: document.getElementById('txyCanvas'),
+      // PFD / Graphviz DOT tabs & controls
+      tabBtnPfd: document.getElementById('tabBtnPfd'),
+      tabBtnDot: document.getElementById('tabBtnDot'),
+      pfdDiagramTab: document.getElementById('pfdDiagramTab'),
+      pfdDotTab: document.getElementById('pfdDotTab'),
+      dotCodeView: document.getElementById('dotCodeView'),
+      btnCopyDot: document.getElementById('btnCopyDot'),
+      btnDownloadDot: document.getElementById('btnDownloadDot'),
+      dagOrderBadge: document.getElementById('dagOrderBadge'),
+      lnkDotApi: document.getElementById('lnkDotApi'),
+      // Mass & Energy Balance closure panel
+      lnkReportApi: document.getElementById('lnkReportApi'),
+      badgeMassConserved: document.getElementById('badgeMassConserved'),
+      badgeEnergyConserved: document.getElementById('badgeEnergyConserved'),
+      kpiMassClosure: document.getElementById('kpiMassClosure'),
+      kpiMassDelta: document.getElementById('kpiMassDelta'),
+      kpiMolarClosure: document.getElementById('kpiMolarClosure'),
+      kpiMolarDelta: document.getElementById('kpiMolarDelta'),
+      kpiEnthalpyIn: document.getElementById('kpiEnthalpyIn'),
+      kpiDutyAdded: document.getElementById('kpiDutyAdded'),
+      kpiEnthalpyDelta: document.getElementById('kpiEnthalpyDelta'),
+      kpiEnthalpyRelErr: document.getElementById('kpiEnthalpyRelErr'),
+      componentTableBody: document.getElementById('componentTableBody'),
+      unitTableBody: document.getElementById('unitTableBody')
     };
+
+    // Tab navigation event listeners
+    els.tabBtnPfd.addEventListener('click', () => {
+      els.tabBtnPfd.classList.add('active');
+      els.tabBtnDot.classList.remove('active');
+      els.pfdDiagramTab.style.display = 'block';
+      els.pfdDotTab.style.display = 'none';
+    });
+
+    els.tabBtnDot.addEventListener('click', () => {
+      els.tabBtnDot.classList.add('active');
+      els.tabBtnPfd.classList.remove('active');
+      els.pfdDiagramTab.style.display = 'none';
+      els.pfdDotTab.style.display = 'block';
+    });
+
+    els.btnCopyDot.addEventListener('click', async () => {
+      if (!currentDotCode) return;
+      try {
+        await navigator.clipboard.writeText(currentDotCode);
+        const originalText = els.btnCopyDot.textContent;
+        els.btnCopyDot.textContent = 'Copied!';
+        setTimeout(() => { els.btnCopyDot.textContent = originalText; }, 1800);
+      } catch (err) {
+        console.error('Failed to copy Graphviz DOT:', err);
+      }
+    });
+
+    els.btnDownloadDot.addEventListener('click', () => {
+      if (!currentDotCode) return;
+      const blob = new Blob([currentDotCode], { type: 'text/vnd.graphviz;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flowsheet_run_${currentRunId || 'benchmark'}.dot`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
 
     function updateLabels() {
       const f1 = parseFloat(els.inpF1.value);
@@ -584,15 +886,39 @@
         flashDrumPressureKpa: parseFloat(els.inpPdrum.value)
       };
 
-      const res = await fetch('/api/simulations/benchmark', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      renderPlantData(data);
-      const s4 = data.streams.find(s => s.id === 'S-104');
-      await loadTxyDiagram(s4.moleFractions['C6H6'], s4.temperatureKelvin);
+      try {
+        const res = await fetch('/api/simulations/benchmark', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        renderPlantData(data);
+        currentRunId = data.savedSimulationRunId;
+
+        // Concurrently fetch DOT topology and First-Law balance closure report
+        const [topologyRes, reportRes] = await Promise.all([
+          fetch(data.topologyUrl || `/api/simulations/${currentRunId}/topology`),
+          fetch(data.balanceReportUrl || `/api/simulations/${currentRunId}/report`)
+        ]);
+
+        if (topologyRes.ok) {
+          const topology = await topologyRes.json();
+          renderTopologyData(topology, currentRunId);
+        }
+
+        if (reportRes.ok) {
+          const report = await reportRes.json();
+          renderBalanceReport(report, currentRunId);
+        }
+
+        const s4 = data.streams.find(s => s.id === 'S-104');
+        if (s4) {
+          await loadTxyDiagram(s4.moleFractions['C6H6'], s4.temperatureKelvin);
+        }
+      } catch (err) {
+        console.error('Flowsheet simulation execution failed:', err);
+      }
     }
 
     function renderPlantData(data) {
@@ -627,6 +953,82 @@
           <td>${(s.moleFractions['C7H8'] ?? 0).toFixed(4)}</td>
         </tr>
       `).join('');
+    }
+
+    function renderTopologyData(topology, runId) {
+      currentDotCode = topology.dotGraph || '';
+      els.dotCodeView.textContent = currentDotCode;
+      if (topology.executionOrder && topology.executionOrder.length > 0) {
+        els.dagOrderBadge.textContent = 'Order: ' + topology.executionOrder.join(' → ');
+      }
+      els.lnkDotApi.href = `/api/simulations/${runId}/topology?format=dot`;
+    }
+
+    function renderBalanceReport(report, runId) {
+      els.lnkReportApi.href = `/api/simulations/${runId}/report`;
+
+      // Conservation Status Badges
+      const isMassOk = report.isMassConserved;
+      const isEnergyOk = report.isEnergyConserved;
+      els.badgeMassConserved.className = isMassOk ? 'badge-pass' : 'badge-fail';
+      els.badgeMassConserved.textContent = isMassOk ? 'Mass Conserved (≤ 1e-6)' : 'Mass Imbalance';
+      els.badgeEnergyConserved.className = isEnergyOk ? 'badge-pass' : 'badge-fail';
+      els.badgeEnergyConserved.textContent = isEnergyOk ? 'Energy Conserved (≤ 1e-5)' : 'Energy Imbalance';
+
+      // Global Balance KPIs
+      const gb = report.globalBalance;
+      els.kpiMassClosure.textContent = `${gb.totalFeedMassFlowKgPerSec.toFixed(4)} kg/s → ${gb.totalProductMassFlowKgPerSec.toFixed(4)} kg/s`;
+      els.kpiMassDelta.textContent = `Δm: ${gb.massFlowDeltaKgPerSec.toExponential(3)} kg/s (${(gb.relativeMassError * 100).toExponential(2)}%)`;
+
+      els.kpiMolarClosure.textContent = `${gb.totalFeedMolarFlowMolPerSec.toFixed(2)} mol/s → ${gb.totalProductMolarFlowMolPerSec.toFixed(2)} mol/s`;
+      els.kpiMolarDelta.textContent = `Δn: ${gb.molarFlowDeltaMolPerSec.toExponential(3)} mol/s (${(gb.relativeMolarError * 100).toExponential(2)}%)`;
+
+      const feedKw = gb.totalFeedEnthalpyWatts / 1000.0;
+      const dutyKw = gb.totalHeatDutyAddedWatts / 1000.0;
+      const totalInKw = feedKw + dutyKw;
+      els.kpiEnthalpyIn.textContent = `${feedKw.toFixed(1)} kW + ${dutyKw.toFixed(1)} kW`;
+      els.kpiDutyAdded.textContent = `Total Input Energy: ${totalInKw.toFixed(2)} kW`;
+
+      els.kpiEnthalpyDelta.textContent = `ΔH: ${gb.enthalpyDeltaWatts.toFixed(2)} W`;
+      els.kpiEnthalpyRelErr.textContent = `Relative ε_H: ${(gb.relativeEnthalpyError * 100).toExponential(3)}%`;
+
+      // Pure-Component Species Conservation Table
+      els.componentTableBody.innerHTML = (report.componentBalances || []).map(c => `
+        <tr>
+          <td style="font-weight:700; color:#38bdf8;">${c.compoundId}</td>
+          <td>${c.compoundName}</td>
+          <td>${c.molarMassGPerMol.toFixed(3)}</td>
+          <td>${c.feedMolarFlowMolPerSec.toFixed(2)}</td>
+          <td>${c.productMolarFlowMolPerSec.toFixed(2)}</td>
+          <td>${c.feedMassFlowKgPerSec.toFixed(4)}</td>
+          <td>${c.productMassFlowKgPerSec.toFixed(4)}</td>
+          <td>${c.massDeltaKgPerSec.toExponential(3)}</td>
+          <td>${(c.relativeMassError * 100).toExponential(2)}%</td>
+          <td><span class="${c.isConserved ? 'badge-pass' : 'badge-fail'}">${c.isConserved ? 'CONSERVED' : 'ERROR'}</span></td>
+        </tr>
+      `).join('');
+
+      // Unit-by-Unit Local Closure Table
+      els.unitTableBody.innerHTML = (report.unitBalances || []).map(u => {
+        const isClosed = u.isMassBalanced && u.isEnergyBalanced;
+        return `
+          <tr>
+            <td style="font-weight:700; color:#f59e0b;">${u.unitId}</td>
+            <td>${u.unitName}</td>
+            <td>${u.unitType}</td>
+            <td>${u.inletMassFlowKgPerSec.toFixed(4)}</td>
+            <td>${u.outletMassFlowKgPerSec.toFixed(4)}</td>
+            <td>${u.massDeltaKgPerSec.toExponential(3)}</td>
+            <td>${(u.inletEnthalpyWatts / 1000.0).toFixed(2)}</td>
+            <td>${(u.outletEnthalpyWatts / 1000.0).toFixed(2)}</td>
+            <td style="color: ${u.heatDutyWatts !== 0 ? '#fbbf24' : 'inherit'}; font-weight: ${u.heatDutyWatts !== 0 ? '700' : 'normal'};">
+              ${(u.heatDutyWatts / 1000.0).toFixed(2)}
+            </td>
+            <td>${u.enthalpyDeltaWatts.toFixed(2)}</td>
+            <td><span class="${isClosed ? 'badge-pass' : 'badge-fail'}">${isClosed ? 'CLOSED' : 'RESIDUAL'}</span></td>
+          </tr>
+        `;
+      }).join('');
     }
 
     async function loadTxyDiagram(operatingZ1 = 0.5, operatingT = 368.15) {
@@ -758,6 +1160,60 @@
         { id: "S-106", name: "Bottoms Toluene-Rich Liquid", phase: "SubcooledLiquid", molarFlowRateMolPerSec: 55.97, temperatureKelvin: 368.15, temperatureCelsius: 95.0, pressureKpa: 101.32, vaporFractionBeta: 0, totalEnthalpyFlowKilowatts: 582.72, moleFractions: { C6H6: 0.4022, C7H8: 0.5978 } }
       ]
     });
+    renderTopologyData({
+      executionOrder: ["M-100", "E-100", "V-100"],
+      dotGraph: `digraph ProcessFlowsheet {
+  rankdir=LR;
+  node [fontname="Helvetica", fontsize=10, style="filled,rounded", shape=box, color="#334155"];
+  edge [fontname="Helvetica", fontsize=9, color="#64748b", arrowhead=vee];
+
+  "M-100" [label="M-100\\nFeed Mixer\\nQ = 0.0 kW", fillcolor="#1e293b", fontcolor="#f8fafc", color="#6366f1"];
+  "E-100" [label="E-100\\nPreheater\\nQ = 921.8 kW", fillcolor="#1e293b", fontcolor="#f8fafc", color="#f59e0b"];
+  "V-100" [label="V-100\\nFlash Drum\\nQ = 0.0 kW", fillcolor="#1e293b", fontcolor="#f8fafc", color="#10b981", shape=doublecircle];
+
+  "FEED_S-101" [label="S-101\\nRich Benzene Feed\\n50.00 mol/s", shape=invhouse, fillcolor="#0f172a", fontcolor="#38bdf8", color="#38bdf8"];
+  "FEED_S-102" [label="S-102\\nRich Toluene Feed\\n50.00 mol/s", shape=invhouse, fillcolor="#0f172a", fontcolor="#38bdf8", color="#38bdf8"];
+  "PROD_S-105" [label="S-105\\nOverhead Vapor\\n44.03 mol/s", shape=house, fillcolor="#0f172a", fontcolor="#fb7185", color="#fb7185"];
+  "PROD_S-106" [label="S-106\\nBottoms Liquid\\n55.97 mol/s", shape=house, fillcolor="#0f172a", fontcolor="#38bdf8", color="#38bdf8"];
+
+  "FEED_S-101" -> "M-100" [label="S-101", color="#38bdf8"];
+  "FEED_S-102" -> "M-100" [label="S-102", color="#38bdf8"];
+  "M-100" -> "E-100" [label="S-103", color="#38bdf8"];
+  "E-100" -> "V-100" [label="S-104", color="#f59e0b"];
+  "V-100" -> "PROD_S-105" [label="S-105", color="#fb7185"];
+  "V-100" -> "PROD_S-106" [label="S-106", color="#38bdf8"];
+}`
+    }, 1);
+    renderBalanceReport({
+      isMassConserved: true,
+      isEnergyConserved: true,
+      globalBalance: {
+        totalFeedMolarFlowMolPerSec: 100.0,
+        totalProductMolarFlowMolPerSec: 100.0,
+        molarFlowDeltaMolPerSec: 0.0,
+        relativeMolarError: 0.0,
+        totalFeedMassFlowKgPerSec: 8.5127,
+        totalProductMassFlowKgPerSec: 8.5127,
+        massFlowDeltaKgPerSec: 0.0,
+        relativeMassError: 0.0,
+        totalFeedEnthalpyWatts: 104660.0,
+        totalProductEnthalpyWatts: 2254640.0,
+        totalHeatDutyAddedWatts: 921835.0,
+        enthalpyDeltaWatts: 0.0,
+        relativeEnthalpyError: 0.0,
+        isMassBalanced: true,
+        isEnergyBalanced: true
+      },
+      componentBalances: [
+        { compoundId: "C6H6", compoundName: "Benzene", molarMassGPerMol: 78.114, feedMolarFlowMolPerSec: 50.0, productMolarFlowMolPerSec: 50.0, feedMassFlowKgPerSec: 3.9057, productMassFlowKgPerSec: 3.9057, massDeltaKgPerSec: 0.0, relativeMassError: 0.0, isConserved: true },
+        { compoundId: "C7H8", compoundName: "Toluene", molarMassGPerMol: 92.141, feedMolarFlowMolPerSec: 50.0, productMolarFlowMolPerSec: 50.0, feedMassFlowKgPerSec: 4.6070, productMassFlowKgPerSec: 4.6070, massDeltaKgPerSec: 0.0, relativeMassError: 0.0, isConserved: true }
+      ],
+      unitBalances: [
+        { unitId: "M-100", unitName: "Feed Mixer", unitType: "Mixer", inletMassFlowKgPerSec: 8.5127, outletMassFlowKgPerSec: 8.5127, massDeltaKgPerSec: 0.0, inletEnthalpyWatts: 104660.0, outletEnthalpyWatts: 104660.0, heatDutyWatts: 0.0, enthalpyDeltaWatts: 0.0, isMassBalanced: true, isEnergyBalanced: true },
+        { unitId: "E-100", unitName: "Preheater", unitType: "HeaterCooler", inletMassFlowKgPerSec: 8.5127, outletMassFlowKgPerSec: 8.5127, massDeltaKgPerSec: 0.0, inletEnthalpyWatts: 104660.0, outletEnthalpyWatts: 1026495.0, heatDutyWatts: 921835.0, enthalpyDeltaWatts: 0.0, isMassBalanced: true, isEnergyBalanced: true },
+        { unitId: "V-100", unitName: "Flash Drum", unitType: "FlashDrum", inletMassFlowKgPerSec: 8.5127, outletMassFlowKgPerSec: 8.5127, massDeltaKgPerSec: 0.0, inletEnthalpyWatts: 1026495.0, outletEnthalpyWatts: 2254640.0, heatDutyWatts: 0.0, enthalpyDeltaWatts: 0.0, isMassBalanced: true, isEnergyBalanced: true }
+      ]
+    }, 1);
     drawTxyChart([
       { moleFractionLight: 0.0, bubbleTemperatureKelvin: 383.74, dewTemperatureKelvin: 383.74, equilibriumVaporFractionLightY: 0.0 },
       { moleFractionLight: 0.1, bubbleTemperatureKelvin: 379.24, dewTemperatureKelvin: 381.66, equilibriumVaporFractionLightY: 0.2093 },
