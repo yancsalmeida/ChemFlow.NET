@@ -19,12 +19,23 @@ public sealed record DistillationStageProfile(
 );
 
 /// <summary>
+/// Intermediate convergence progress reported at each Wang-Henke MESH iteration.
+/// </summary>
+public sealed record DistillationIterationProgress(
+    int Iteration,
+    double MaxDeltaT,
+    double RelativeError,
+    IReadOnlyList<double> StageTemperaturesKelvin
+);
+
+/// <summary>
 /// Numerical convergence configuration for rigorous distillation column solving.
 /// </summary>
 public sealed record DistillationColumnOptions(
     int MaxIterations = 80,
     double Tolerance = 1e-4,
-    double DampingFactor = 0.6
+    double DampingFactor = 0.6,
+    Action<DistillationIterationProgress>? OnIteration = null
 )
 {
     public static DistillationColumnOptions Default { get; } = new();
@@ -294,6 +305,13 @@ public sealed class DistillationColumn : UnitOperationBase
                         yMatrix[j, i] /= sumY;
                 }
             }
+
+            Options.OnIteration?.Invoke(new DistillationIterationProgress(
+                iter,
+                maxDeltaT,
+                maxRelDeltaT,
+                tCalc.ToArray()
+            ));
 
             // 4. Convergence check (relative temperature tolerance or absolute <= 0.01 K)
             if (maxRelDeltaT <= Options.Tolerance || maxDeltaT <= 0.01)

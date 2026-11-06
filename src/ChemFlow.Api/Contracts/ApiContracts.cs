@@ -165,3 +165,35 @@ public sealed record DistillationSimulationResponse(
     string? TopologyUrl = null,
     string? BalanceReportUrl = null
 );
+
+public sealed record DistillationIterationUpdateDto(
+    int Iteration,
+    double MaxDeltaT,
+    double RelativeError,
+    IReadOnlyList<double> StageTemperaturesCelsius
+);
+
+public sealed record CstrStreamRequest(
+    [property: DefaultValue(100.0)] double VolumetricFlowLPerMin = 100.0,
+    [property: DefaultValue(300.0)] double CoolantTemperatureKelvin = 300.0,
+    [property: DefaultValue(1.0)] double FeedConcentrationMolPerL = 1.0,
+    [property: DefaultValue(300.0)] double FeedTemperatureKelvin = 300.0,
+    [property: DefaultValue(100.0)] double ReactorVolumeLiters = 100.0,
+    [property: DefaultValue(120)] int MaxFrames = 120,
+    [property: DefaultValue(150)] int IntervalMs = 150
+);
+
+public sealed record CstrTelemetryFrameDto(
+    int FrameIndex,
+    double TimeSeconds,
+    double ReactantConcentrationMolPerL,
+    double TemperatureKelvin,
+    double TemperatureCelsius,
+    double ConversionPct,
+    double ReactionRateMolPerLMin,
+    double CoolantTemperatureKelvin,
+    double CoolingDutyKilowatts,
+    bool IsThermalRunaway,
+    string Status,
+    string EngineMode
+);

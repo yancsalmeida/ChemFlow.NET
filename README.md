@@ -2,15 +2,16 @@
 
 [![.NET CI](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/yancsalmeida/ChemFlow.NET/actions/workflows/ci.yml)
 [![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4.svg?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![SignalR](https://img.shields.io/badge/SignalR-WebSockets%20Streaming-512BD4?logo=dotnet&logoColor=white)](#real-time-telemetry--signalr-streaming)
 [![Thermodynamics](https://img.shields.io/badge/EOS-Peng--Robinson%20(1976)-00599C.svg)](#thermodynamics--process-physics)
 [![Native C11 FFI](https://img.shields.io/badge/C11_FFI-ReactorCore.C-00599C?logo=c)](https://github.com/yancsalmeida/ReactorCore.C)
-[![Tests](https://img.shields.io/badge/Tests-56%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
+[![Tests](https://img.shields.io/badge/Tests-59%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](docker-compose.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An enterprise-grade **Modular Steady-State Chemical Process & Thermodynamic Simulation Engine** built with **C# 12** and **.NET 8** following strict **Clean Architecture** principles.
 
-It models multi-component non-ideal vapor-liquid equilibrium (Peng-Robinson EOS and Raoult's Law), rigorous mass and enthalpy balances across unit operations, directed acyclic graph (DAG) process flowsheet execution with Graphviz/DOT topology export, mass/energy balance closure validation ($\Delta m < 10^{-5}$, $\Delta H < 10^{-4}$), and relational persistence in **SQLite**.
+It models multi-component non-ideal vapor-liquid equilibrium (Peng-Robinson EOS and Raoult's Law), rigorous mass and enthalpy balances across unit operations, directed acyclic graph (DAG) process flowsheet execution with Graphviz/DOT topology export, mass/energy balance closure validation ($\Delta m < 10^{-5}$, $\Delta H < 10^{-4}$), real-time dynamic CSTR telemetry and MESH distillation progress via **ASP.NET Core SignalR WebSockets**, and relational persistence in **SQLite**.
 
 ![ChemFlow.NET — Process Simulation & Thermodynamics Studio](docs/chemflow-studio-preview.png)
 
@@ -22,13 +23,15 @@ The solution is partitioned into modular layers adhering to strict **Dependency 
 
 ```mermaid
 flowchart TD
-    subgraph Client["Web Studio & HTTP Consumers"]
+    subgraph Client["Web Studio & HTTP/WebSocket Consumers"]
         Browser["Interactive Web Studio Dashboard (wwwroot/index.html)"]
         HTTP["REST API Consumers"]
+        WS["SignalR WebSocket Clients"]
     end
 
-    subgraph API["ChemFlow.Api (ASP.NET Core Minimal APIs)"]
-        Endpoints["Endpoints (/api/thermo, /api/simulations, /api/compounds)"]
+    subgraph API["ChemFlow.Api (ASP.NET Core Minimal APIs & SignalR)"]
+        Endpoints["Endpoints (/api/thermo, /api/simulations, /api/compounds, /api/telemetry)"]
+        Hub["SignalR Hub (/hubs/simulation - Duplex Telemetry & MESH Progress)"]
         Swagger["OpenAPI / Swagger UI Docs"]
     end
 
@@ -47,13 +50,16 @@ flowchart TD
     end
 
     subgraph Tests["ChemFlow.Tests (xUnit)"]
-        UnitTests["56 Automated Domain, Thermo, RadFrac & Integration Tests"]
+        UnitTests["59 Automated Domain, Thermo, RadFrac, SignalR & Integration Tests"]
     end
 
     Browser --> Endpoints
+    Browser --> Hub
     HTTP --> Endpoints
+    WS --> Hub
     Endpoints --> Domain
     Endpoints --> Infra
+    Hub --> Domain
     Infra --> Domain
     UnitTests -->|"Verifies"| Domain
 ```
@@ -121,10 +127,21 @@ using a safeguarded Newton-Raphson solver with automatic fallback to bisection r
 | `POST` | `/api/simulations/benchmark` | Execute and persist flash separation flowsheet (`Mixer` $\rightarrow$ `Heater` $\rightarrow$ `FlashDrum`) |
 | `POST` | `/api/simulations/recycle` | Solve closed-loop recycle flowsheet (`Mixer` $\rightarrow$ `FlashDrum` $\rightarrow$ `Splitter` $\rightarrow$ `Mixer`) with Wegstein acceleration |
 | `POST` | `/api/simulations/distillation` | Rigorous multicomponent staged distillation column (`Wang-Henke BP MESH` & `Thomas Algorithm`) returning stage profiles and duties |
+| `POST` | `/api/telemetry/cstr/step` | Single-step continuous stirred tank reactor ODE integration via native C11 RK4 or managed fallback |
 | `GET` | `/api/simulations` | Retrieve historical simulation runs from SQLite |
 | `GET` | `/api/simulations/{id}` | Retrieve detailed stream results for a simulation run |
 | `GET` | `/api/simulations/{id}/topology` | Export flowsheet graph topology (JSON or Graphviz DOT via `?format=dot`) |
 | `GET` | `/api/simulations/{id}/report` | Retrieve mass and energy balance closure report (closure errors and conservation metrics) |
+
+### Real-Time Telemetry & SignalR Streaming
+
+ChemFlow.NET exposes an **ASP.NET Core SignalR Hub** mapped at `/hubs/simulation` supporting bidirectional real-time streaming:
+
+| Hub Method / Event | Protocol | Description |
+| :--- | :--- | :--- |
+| `StreamCstrSimulation` | `IAsyncEnumerable<CstrTelemetryFrameDto>` | Dynamic CSTR time-series telemetry streaming at 5–10 Hz using 4th-Order Runge-Kutta via native C11 FFI (`ReactorCore.C`). Emits temperature, conversion, Arrhenius reaction rates, jacket cooling duty, and trips thermal runaway excursions ($T > 126.9^\circ\text{C}$). |
+| `SolveDistillationWithProgress` | Duplex RPC + Callback | Executes rigorous Wang-Henke MESH distillation column while streaming iteration residual progress (`OnDistillationIteration`) to clients in real-time. |
+| `OnDistillationIteration` | Server-to-Client Event | Broadcasts iteration index, maximum temperature residual ($|T^{(k+1)} - T^{(k)}|_\infty$), and convergence tolerance. |
 
 ---
 
@@ -168,7 +185,7 @@ dotnet test ChemFlow.sln
 ```
 
 ```text
-Passed! - Failed: 0, Passed: 56, Skipped: 0, Total: 56, Duration: 721 ms
+Passed! - Failed: 0, Passed: 59, Skipped: 0, Total: 59, Duration: 804 ms
 ```
 
 ---

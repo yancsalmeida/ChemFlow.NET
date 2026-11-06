@@ -1,6 +1,8 @@
 using ChemFlow.Api.Contracts;
+using ChemFlow.Api.Hubs;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
+using ChemFlow.Domain.Native;
 using ChemFlow.Domain.Repositories;
 using ChemFlow.Domain.Streams;
 using ChemFlow.Domain.Thermodynamics;
@@ -12,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSignalR();
 
 string connectionString = builder.Configuration.GetConnectionString("ChemFlowDb")
     ?? "Data Source=chemflow.db";
@@ -543,6 +546,53 @@ app.MapGet("/api/simulations/{id:long}/report", (long id, ISimulationHistoryRepo
     return Results.Ok(report);
 })
 .WithName("GetSimulationBalanceReport")
+.WithOpenApi();
+
+// ==============================================================================
+// SignalR Real-Time Streaming Hub & CSTR Telemetry Endpoints
+// ==============================================================================
+app.MapHub<SimulationTelemetryHub>("/hubs/simulation");
+
+app.MapPost("/api/telemetry/cstr/step", (CstrStreamRequest request) =>
+{
+    var defaultParams = NativeReactorCoreInterop.GetDefaultParameters();
+    var p = new CstrParamsFFI
+    {
+        VolumetricFlowLPerMin = request.VolumetricFlowLPerMin,
+        VolumeLiters = request.ReactorVolumeLiters,
+        K0PerMin = defaultParams.K0PerMin,
+        EaOverRKelvin = defaultParams.EaOverRKelvin,
+        DeltaHJPerMol = defaultParams.DeltaHJPerMol,
+        RhoCpJPerLK = defaultParams.RhoCpJPerLK,
+        UaJPerMinK = defaultParams.UaJPerMinK,
+        CaFeedMolPerL = request.FeedConcentrationMolPerL,
+        TFeedKelvin = request.FeedTemperatureKelvin,
+        TCoolantKelvin = request.CoolantTemperatureKelvin
+    };
+
+    double ca = request.FeedConcentrationMolPerL;
+    double tempK = request.FeedTemperatureKelvin;
+    NativeReactorCoreInterop.StepDetailed(in p, ref ca, ref tempK, 0.02, 400.0, out var state);
+    double coolingDutyKw = (p.UaJPerMinK / 60.0) * (tempK - p.TCoolantKelvin) / 1000.0;
+
+    return Results.Ok(new CstrTelemetryFrameDto(
+        FrameIndex: 1,
+        TimeSeconds: 1.2,
+        ReactantConcentrationMolPerL: Math.Round(state.CaMolPerL, 4),
+        TemperatureKelvin: Math.Round(state.TempKelvin, 2),
+        TemperatureCelsius: Math.Round(state.TempKelvin - 273.15, 2),
+        ConversionPct: Math.Round(state.ConversionPct, 2),
+        ReactionRateMolPerLMin: Math.Round(state.ReactionRateMolPerLMin, 4),
+        CoolantTemperatureKelvin: Math.Round(p.TCoolantKelvin, 2),
+        CoolingDutyKilowatts: Math.Round(coolingDutyKw, 2),
+        IsThermalRunaway: state.IsRunaway,
+        Status: state.IsRunaway ? "CRITICAL_RUNAWAY" : (state.TempKelvin > 380.0 ? "WARNING_HIGH_TEMP" : "NORMAL"),
+        EngineMode: NativeReactorCoreInterop.IsNativeAvailable
+            ? $"Native C11 ({NativeReactorCoreInterop.VersionString})"
+            : "Managed C# RK4"
+    ));
+})
+.WithName("StepCstrSimulation")
 .WithOpenApi();
 
 app.Run();

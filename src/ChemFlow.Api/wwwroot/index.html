@@ -449,6 +449,9 @@
       </div>
     </div>
     <div class="header-actions">
+      <span class="pill-badge" id="signalrStatusBadge" style="background: rgba(244, 63, 94, 0.15); border-color: rgba(244, 63, 94, 0.4); color: #fb7185;">
+        &bull; SignalR Disconnected
+      </span>
       <span class="pill-badge" id="sqlStatusBadge">SQLite: 6 Compounds Loaded</span>
       <a href="/swagger" class="btn-link">Open Swagger OpenAPI &rarr;</a>
     </div>
@@ -663,6 +666,91 @@
         </div>
       </div>
 
+      <!-- Live Process Telemetry & Streaming SCADA Panel (SignalR WebSockets) -->
+      <div class="panel" id="liveTelemetryPanel" style="border-color: rgba(6, 182, 212, 0.45); margin-bottom: 1.25rem;">
+        <div class="panel-header">
+          <div>
+            <h2>Real-Time Dynamic Process Telemetry (ASP.NET Core SignalR)</h2>
+            <div id="telemetrySubtitle" style="font-family: var(--font-mono); font-size: 0.78rem; color: #67e8f9; margin-top: 0.2rem;">
+              Continuous Stirred-Tank Reactor (CSTR) — Exothermic Reaction with Runaway Interlock Protection
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.6rem; align-items: center;">
+            <span class="pill-badge" id="telemetryEngineBadge" style="background: rgba(6, 182, 212, 0.15); border-color: rgba(6, 182, 212, 0.4); color: #67e8f9;">
+              Engine: Native C11 (RK4)
+            </span>
+            <button class="btn-primary" id="btnStartCstrStream" style="background: #0891b2; border-color: #06b6d4; padding: 0.35rem 0.85rem; font-size: 0.82rem;">
+              &#9654; Start Live Stream
+            </button>
+            <button class="btn-secondary" id="btnStopCstrStream" style="display: none; background: #e11d48; border-color: #f43f5e; color: #fff; padding: 0.35rem 0.85rem; font-size: 0.82rem;">
+              &#9632; Stop Stream
+            </button>
+          </div>
+        </div>
+
+        <!-- Live SCADA KPI Grid -->
+        <div class="kpi-grid" style="grid-template-columns: repeat(6, 1fr); margin-bottom: 1rem;">
+          <div class="kpi-card" style="border-left: 3px solid #f59e0b;">
+            <div class="label">Reactor Temp T</div>
+            <div class="value" id="liveKpiTemp" style="color: #fbbf24;">35.4 °C</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; font-family: var(--font-mono);" id="liveKpiTempK">308.55 K</div>
+          </div>
+          <div class="kpi-card" style="border-left: 3px solid #38bdf8;">
+            <div class="label">Reactant Conc Ca</div>
+            <div class="value" id="liveKpiCa" style="color: #38bdf8;">0.18 mol/L</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; font-family: var(--font-mono);" id="liveKpiCaFeed">Feed: 1.00 mol/L</div>
+          </div>
+          <div class="kpi-card" style="border-left: 3px solid #10b981;">
+            <div class="label">Conversion Xa</div>
+            <div class="value" id="liveKpiConv" style="color: #34d399;">82.0 %</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; font-family: var(--font-mono);">Xa = 1 - Ca/Ca0</div>
+          </div>
+          <div class="kpi-card" style="border-left: 3px solid #a855f7;">
+            <div class="label">Reaction Rate ra</div>
+            <div class="value" id="liveKpiRate" style="color: #c084fc;">0.024 mol/L·min</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; font-family: var(--font-mono);">Arrhenius Law</div>
+          </div>
+          <div class="kpi-card" style="border-left: 3px solid #06b6d4;">
+            <div class="label">Cooling Duty Qc</div>
+            <div class="value" id="liveKpiDuty" style="color: #67e8f9;">-5.7 kW</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; font-family: var(--font-mono);" id="liveKpiTc">Tc: 300.0 K (26.9 °C)</div>
+          </div>
+          <div class="kpi-card" id="liveKpiCardStatus" style="border-left: 3px solid #10b981;">
+            <div class="label">Safety Status</div>
+            <div class="value" id="liveKpiStatus" style="color: #34d399; font-size: 0.95rem;">NORMAL</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; font-family: var(--font-mono);" id="liveKpiTrip">Trip &gt; 126.9 °C</div>
+          </div>
+        </div>
+
+        <!-- Live Strip Chart Canvas -->
+        <div style="background: #080c14; border-radius: 8px; padding: 0.75rem; border: 1px solid var(--border); position: relative; margin-bottom: 0.75rem;">
+          <canvas id="cstrLiveCanvas" width="980" height="230" style="display: block; width: 100%; height: auto; max-height: 240px;"></canvas>
+          <div id="cstrLiveBanner" style="display: none; position: absolute; top: 1rem; right: 1rem; background: rgba(244, 63, 94, 0.9); color: #fff; padding: 0.4rem 0.8rem; border-radius: 6px; font-weight: 700; font-family: var(--font-mono); font-size: 0.78rem;">
+            CRITICAL THERMAL RUNAWAY EXCURSION
+          </div>
+        </div>
+
+        <!-- Interactive Sliders for Live Reactor Tuning -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; background: #0f172a; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border);">
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.76rem;">Coolant Temp Tc <span class="val" id="lblLiveTc">300.0 K (26.9 °C)</span></label>
+            <input type="range" id="inpLiveTc" min="280" max="360" step="1" value="300" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.76rem;">Feed Flow q <span class="val" id="lblLiveFlow">100 L/min</span></label>
+            <input type="range" id="inpLiveFlow" min="20" max="200" step="5" value="100" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.76rem;">Feed Conc Ca0 <span class="val" id="lblLiveCa0">1.00 mol/L</span></label>
+            <input type="range" id="inpLiveCa0" min="0.5" max="2.5" step="0.05" value="1.0" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.76rem;">Feed Temp T0 <span class="val" id="lblLiveT0">350.0 K (76.9 °C)</span></label>
+            <input type="range" id="inpLiveT0" min="300" max="380" step="1" value="350" />
+          </div>
+        </div>
+      </div>
+
       <!-- Distillation Column Stage Profiles Panel (MESH Wang-Henke BP) -->
       <div class="panel" id="distillationPanel" style="display: none;">
         <div class="panel-header">
@@ -843,6 +931,7 @@
     </section>
   </main>
 
+  <script src="/js/signalr.min.js"></script>
   <script>
     let currentDotCode = '';
     let currentRunId = null;
@@ -916,12 +1005,41 @@
       btnDistillPlotBoth: document.getElementById('btnDistillPlotBoth'),
       btnDistillPlotTemp: document.getElementById('btnDistillPlotTemp'),
       btnDistillPlotComp: document.getElementById('btnDistillPlotComp'),
-      btnDistillPlotFlows: document.getElementById('btnDistillPlotFlows')
+      btnDistillPlotFlows: document.getElementById('btnDistillPlotFlows'),
+      // SignalR & Live Dynamic Telemetry Controls
+      signalrStatusBadge: document.getElementById('signalrStatusBadge'),
+      btnStartCstrStream: document.getElementById('btnStartCstrStream'),
+      btnStopCstrStream: document.getElementById('btnStopCstrStream'),
+      liveKpiTemp: document.getElementById('liveKpiTemp'),
+      liveKpiTempK: document.getElementById('liveKpiTempK'),
+      liveKpiCa: document.getElementById('liveKpiCa'),
+      liveKpiCaFeed: document.getElementById('liveKpiCaFeed'),
+      liveKpiConv: document.getElementById('liveKpiConv'),
+      liveKpiRate: document.getElementById('liveKpiRate'),
+      liveKpiDuty: document.getElementById('liveKpiDuty'),
+      liveKpiTc: document.getElementById('liveKpiTc'),
+      liveKpiCardStatus: document.getElementById('liveKpiCardStatus'),
+      liveKpiStatus: document.getElementById('liveKpiStatus'),
+      liveKpiTrip: document.getElementById('liveKpiTrip'),
+      cstrLiveCanvas: document.getElementById('cstrLiveCanvas'),
+      cstrLiveBanner: document.getElementById('cstrLiveBanner'),
+      inpLiveTc: document.getElementById('inpLiveTc'),
+      lblLiveTc: document.getElementById('lblLiveTc'),
+      inpLiveFlow: document.getElementById('inpLiveFlow'),
+      lblLiveFlow: document.getElementById('lblLiveFlow'),
+      inpLiveCa0: document.getElementById('inpLiveCa0'),
+      lblLiveCa0: document.getElementById('lblLiveCa0'),
+      inpLiveT0: document.getElementById('inpLiveT0'),
+      lblLiveT0: document.getElementById('lblLiveT0')
     };
 
     let currentStageProfiles = [];
     let currentFeedStage = 5;
     let currentPlotMode = 'both';
+    let signalrConnection = null;
+    let cstrStreamSubscription = null;
+    let cstrHistory = [];
+    const MAX_CSTR_HISTORY = 60;
 
     // Tab navigation event listeners
     els.tabBtnPfd.addEventListener('click', () => {
@@ -992,6 +1110,23 @@
         els.lblFeedStage.textContent = `${nf}`;
         els.lblReflux.textContent = `${r.toFixed(2)}`;
         els.lblDistRate.textContent = `${d.toFixed(1)} mol/s`;
+      }
+
+      if (els.inpLiveTc && els.lblLiveTc) {
+        const tc = parseFloat(els.inpLiveTc.value);
+        els.lblLiveTc.textContent = `${tc.toFixed(1)} K (${(tc - 273.15).toFixed(1)} °C)`;
+      }
+      if (els.inpLiveFlow && els.lblLiveFlow) {
+        const q = parseFloat(els.inpLiveFlow.value);
+        els.lblLiveFlow.textContent = `${q.toFixed(0)} L/min`;
+      }
+      if (els.inpLiveCa0 && els.lblLiveCa0) {
+        const ca0 = parseFloat(els.inpLiveCa0.value);
+        els.lblLiveCa0.textContent = `${ca0.toFixed(2)} mol/L`;
+      }
+      if (els.inpLiveT0 && els.lblLiveT0) {
+        const t0 = parseFloat(els.inpLiveT0.value);
+        els.lblLiveT0.textContent = `${t0.toFixed(1)} K (${(t0 - 273.15).toFixed(1)} °C)`;
       }
     }
 
@@ -1111,12 +1246,30 @@
       };
 
       try {
-        const res = await fetch('/api/simulations/distillation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
+        let data;
+        let solvedViaHub = false;
+        if (signalrConnection && signalrConnection.state === 'Connected') {
+          try {
+            if (els.dagOrderBadge) {
+              els.dagOrderBadge.textContent = 'Distillation: Solving via SignalR Hub...';
+              els.dagOrderBadge.style.color = '#38bdf8';
+            }
+            data = await signalrConnection.invoke('SolveDistillationWithProgress', payload);
+            solvedViaHub = true;
+          } catch (hubErr) {
+            console.warn('SignalR distillation solve failed, falling back to REST:', hubErr);
+          }
+        }
+
+        if (!solvedViaHub) {
+          const res = await fetch('/api/simulations/distillation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          data = await res.json();
+        }
+
         renderPlantData(data);
         currentRunId = data.savedSimulationRunId;
         currentStageProfiles = data.stageProfiles || [];
@@ -1660,6 +1813,332 @@
       ctx.fillText('— Dew Line (Vapor y₁)', pad.left + 205, pad.top + 16);
     }
 
+    // =========================================================================
+    // Real-time ASP.NET Core SignalR Dynamic Telemetry & CSTR Oscilloscope
+    // =========================================================================
+
+    async function initSignalR() {
+      if (typeof signalR === 'undefined') {
+        console.warn('SignalR client library not detected.');
+        updateSignalRBadge(false, 'Unavailable');
+        return;
+      }
+
+      signalrConnection = new signalR.HubConnectionBuilder()
+        .withUrl('/hubs/simulation')
+        .withAutomaticReconnect([0, 2000, 5000, 10000])
+        .build();
+
+      signalrConnection.onreconnecting(() => updateSignalRBadge(false, 'Reconnecting...'));
+      signalrConnection.onreconnected(() => updateSignalRBadge(true));
+      signalrConnection.onclose(() => updateSignalRBadge(false));
+
+      // Real-time MESH Distillation iteration callback from backend
+      signalrConnection.on('OnDistillationIteration', (prog) => {
+        if (els.dagOrderBadge) {
+          els.dagOrderBadge.textContent = `Wang-Henke Iter ${prog.iteration}/${prog.maxIterations}: Max Residual = ${prog.maxResidual.toExponential(2)} (Tol: ${prog.tolerance.toExponential(1)})`;
+          els.dagOrderBadge.style.color = '#f59e0b';
+        }
+      });
+
+      try {
+        await signalrConnection.start();
+        updateSignalRBadge(true);
+      } catch (err) {
+        console.warn('SignalR initial connection failed, will retry on demand:', err);
+        updateSignalRBadge(false);
+      }
+    }
+
+    function updateSignalRBadge(connected, statusText) {
+      if (!els.signalrStatusBadge) return;
+      if (connected) {
+        els.signalrStatusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+        els.signalrStatusBadge.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+        els.signalrStatusBadge.style.color = '#34d399';
+        els.signalrStatusBadge.innerHTML = '&bull; SignalR Live (WebSockets)';
+      } else {
+        els.signalrStatusBadge.style.background = 'rgba(244, 63, 94, 0.15)';
+        els.signalrStatusBadge.style.borderColor = 'rgba(244, 63, 94, 0.4)';
+        els.signalrStatusBadge.style.color = '#fb7185';
+        els.signalrStatusBadge.innerHTML = `&bull; SignalR ${statusText || 'Disconnected'}`;
+      }
+    }
+
+    async function startCstrStream() {
+      if (cstrStreamSubscription) return;
+
+      if (!signalrConnection || signalrConnection.state !== 'Connected') {
+        try {
+          await initSignalR();
+        } catch (e) {
+          console.error('Cannot connect SignalR:', e);
+          alert('SignalR connection failed. Ensure ChemFlow.Api is running.');
+          return;
+        }
+      }
+
+      if (!signalrConnection || signalrConnection.state !== 'Connected') {
+        alert('SignalR is not connected.');
+        return;
+      }
+
+      const req = {
+        initialConcentrationA: parseFloat(els.inpLiveCa0?.value || '1.0'),
+        initialTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '350.0'),
+        feedConcentrationA: parseFloat(els.inpLiveCa0?.value || '1.0'),
+        feedTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '350.0'),
+        coolantTemperatureKelvin: parseFloat(els.inpLiveTc?.value || '300.0'),
+        volumetricFlowRateLitersPerMin: parseFloat(els.inpLiveFlow?.value || '100.0'),
+        timeStepMinutes: 0.05,
+        intervalMs: 100,
+        maxFrames: 600
+      };
+
+      if (els.btnStartCstrStream) els.btnStartCstrStream.style.display = 'none';
+      if (els.btnStopCstrStream) els.btnStopCstrStream.style.display = 'inline-block';
+
+      cstrHistory = [];
+      drawCstrLiveChart(cstrHistory);
+
+      try {
+        cstrStreamSubscription = signalrConnection.stream('StreamCstrSimulation', req).subscribe({
+          next: (frame) => handleCstrTelemetryFrame(frame),
+          complete: () => stopCstrStream(),
+          error: (err) => {
+            console.error('CSTR stream error:', err);
+            stopCstrStream();
+          }
+        });
+      } catch (err) {
+        console.error('Failed to initiate CSTR stream:', err);
+        stopCstrStream();
+      }
+    }
+
+    function stopCstrStream() {
+      if (cstrStreamSubscription) {
+        try {
+          cstrStreamSubscription.dispose();
+        } catch (e) {
+          console.warn('Error disposing stream subscription:', e);
+        }
+        cstrStreamSubscription = null;
+      }
+
+      if (els.btnStartCstrStream) els.btnStartCstrStream.style.display = 'inline-block';
+      if (els.btnStopCstrStream) els.btnStopCstrStream.style.display = 'none';
+    }
+
+    function handleCstrTelemetryFrame(frame) {
+      if (els.liveKpiTemp) els.liveKpiTemp.textContent = `${frame.temperatureCelsius.toFixed(1)} °C`;
+      if (els.liveKpiTempK) els.liveKpiTempK.textContent = `${frame.temperatureKelvin.toFixed(2)} K`;
+      if (els.liveKpiCa) els.liveKpiCa.textContent = `${frame.reactantConcentrationMolPerLiter.toFixed(3)} mol/L`;
+      if (els.liveKpiCaFeed) els.liveKpiCaFeed.textContent = `Feed: ${(parseFloat(els.inpLiveCa0?.value || '1.0')).toFixed(2)} mol/L`;
+      if (els.liveKpiConv) els.liveKpiConv.textContent = `${(frame.conversionRatio * 100).toFixed(1)} %`;
+      if (els.liveKpiRate) els.liveKpiRate.textContent = `${frame.reactionRateMolPerLiterMin.toFixed(4)} mol/L·min`;
+      if (els.liveKpiDuty) els.liveKpiDuty.textContent = `${frame.coolingDutyKilowatts.toFixed(2)} kW`;
+      if (els.liveKpiTc) els.liveKpiTc.textContent = `Tc: ${(parseFloat(els.inpLiveTc?.value || '300')).toFixed(1)} K`;
+
+      if (frame.isThermalRunaway) {
+        if (els.liveKpiStatus) {
+          els.liveKpiStatus.textContent = 'RUNAWAY TRIP';
+          els.liveKpiStatus.style.color = '#fb7185';
+        }
+        if (els.liveKpiCardStatus) {
+          els.liveKpiCardStatus.style.borderLeftColor = '#f43f5e';
+        }
+        if (els.cstrLiveBanner) {
+          els.cstrLiveBanner.style.display = 'block';
+        }
+      } else {
+        if (els.liveKpiStatus) {
+          els.liveKpiStatus.textContent = 'NORMAL';
+          els.liveKpiStatus.style.color = '#34d399';
+        }
+        if (els.liveKpiCardStatus) {
+          els.liveKpiCardStatus.style.borderLeftColor = '#10b981';
+        }
+        if (els.cstrLiveBanner) {
+          els.cstrLiveBanner.style.display = 'none';
+        }
+      }
+
+      cstrHistory.push(frame);
+      if (cstrHistory.length > MAX_CSTR_HISTORY) {
+        cstrHistory.shift();
+      }
+      drawCstrLiveChart(cstrHistory);
+    }
+
+    function drawCstrLiveChart(history) {
+      if (!els.cstrLiveCanvas) return;
+      const canvas = els.cstrLiveCanvas;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const pad = { left: 55, right: 55, top: 25, bottom: 32 };
+      const plotW = w - pad.left - pad.right;
+      const plotH = h - pad.top - pad.bottom;
+
+      const minT = 20;
+      const maxT = 160;
+      const runawayT = 126.85; // 400 K
+
+      const toX = idx => pad.left + (idx / Math.max(1, MAX_CSTR_HISTORY - 1)) * plotW;
+      const toYT = t => pad.top + (1 - (t - minT) / (maxT - minT)) * plotH;
+      const toYX = x => pad.top + (1 - Math.max(0, Math.min(1, x))) * plotH;
+
+      // 1. Gridlines & Y-Axis Labels
+      ctx.lineWidth = 1;
+      ctx.font = '10px "JetBrains Mono", Consolas, monospace';
+
+      // Horizontal grid
+      const tSteps = [20, 55, 90, 125, 160];
+      tSteps.forEach(t => {
+        const y = toYT(t);
+        ctx.beginPath();
+        ctx.strokeStyle = '#1e293b';
+        ctx.setLineDash([]);
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + plotW, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${t}°C`, pad.left - 8, y + 3);
+      });
+
+      // Right XA axis (0%, 25%, 50%, 75%, 100%)
+      for (let k = 0; k <= 4; k++) {
+        const frac = k * 0.25;
+        const y = toYX(frac);
+        ctx.fillStyle = '#34d399';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${(frac * 100).toFixed(0)}%`, pad.left + plotW + 8, y + 3);
+      }
+
+      // Vertical grid lines
+      ctx.strokeStyle = '#111827';
+      for (let i = 0; i <= MAX_CSTR_HISTORY; i += 10) {
+        const x = toX(i);
+        ctx.beginPath();
+        ctx.moveTo(x, pad.top);
+        ctx.lineTo(x, pad.top + plotH);
+        ctx.stroke();
+      }
+
+      // 2. Critical Runaway Threshold Line (400 K / 126.9 °C)
+      const yTrip = toYT(runawayT);
+      ctx.beginPath();
+      ctx.strokeStyle = '#f43f5e';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.moveTo(pad.left, yTrip);
+      ctx.lineTo(pad.left + plotW, yTrip);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#fb7185';
+      ctx.textAlign = 'left';
+      ctx.fillText('TRIP THRESHOLD: 126.9 °C (400 K)', pad.left + 10, yTrip - 6);
+
+      // 3. Header Legends
+      ctx.textAlign = 'left';
+      ctx.font = '11px "JetBrains Mono", Consolas, monospace';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText('● Reactor Temp T (°C)', pad.left, 16);
+      ctx.fillStyle = '#34d399';
+      ctx.fillText('● Conversion X_A (%)', pad.left + 175, 16);
+
+      const tcVal = els.inpLiveTc ? parseFloat(els.inpLiveTc.value) : 300;
+      const qVal = els.inpLiveFlow ? parseFloat(els.inpLiveFlow.value) : 100;
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'right';
+      ctx.fillText(`Coolant Tc: ${tcVal.toFixed(0)} K | Flow: ${qVal.toFixed(0)} L/min`, pad.left + plotW, 16);
+
+      // 4. Standby check
+      if (!history || history.length === 0) {
+        ctx.fillStyle = '#64748b';
+        ctx.textAlign = 'center';
+        ctx.font = '12px "Inter", -apple-system, sans-serif';
+        ctx.fillText('SignalR Telemetry Standby — Press "Start Live Stream" to begin Runge-Kutta 4 dynamic telemetry', pad.left + plotW / 2, pad.top + plotH / 2);
+        return;
+      }
+
+      const n = history.length;
+
+      // 5. Draw Conversion Curve (Green)
+      ctx.beginPath();
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2.2;
+      history.forEach((f, i) => {
+        const x = toX(i);
+        const y = toYX(f.conversionRatio);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // 6. Draw Temperature Curve (Amber/Red)
+      const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+      grad.addColorStop(0, 'rgba(245, 158, 11, 0.22)');
+      grad.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
+
+      ctx.beginPath();
+      history.forEach((f, i) => {
+        const x = toX(i);
+        const y = toYT(f.temperatureCelsius);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.lineTo(toX(n - 1), pad.top + plotH);
+      ctx.lineTo(toX(0), pad.top + plotH);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2.5;
+      history.forEach((f, i) => {
+        const x = toX(i);
+        const y = toYT(f.temperatureCelsius);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // 7. Endpoint Highlights
+      const last = history[n - 1];
+      const lastX = toX(n - 1);
+      const lastYT = toYT(last.temperatureCelsius);
+      const lastYX = toYX(last.conversionRatio);
+
+      ctx.beginPath();
+      ctx.arc(lastX, lastYT, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = last.isThermalRunaway ? '#f43f5e' : '#fbbf24';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(lastX, lastYX, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#34d399';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.font = '10px "JetBrains Mono", Consolas, monospace';
+      ctx.fillStyle = last.isThermalRunaway ? '#f43f5e' : '#fbbf24';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${last.temperatureCelsius.toFixed(1)}°C`, Math.max(pad.left + 50, lastX - 8), Math.max(pad.top + 12, lastYT - 6));
+    }
+
     ['inpF1', 'inpT1', 'inpF2', 'inpT2', 'inpTheat', 'inpPdrum', 'inpStages', 'inpFeedStage', 'inpReflux', 'inpDistRate'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -1669,6 +2148,21 @@
         }
       }
     });
+
+    ['inpLiveTc', 'inpLiveFlow', 'inpLiveCa0', 'inpLiveT0'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', () => {
+          updateLabels();
+          if (!cstrStreamSubscription) {
+            drawCstrLiveChart(cstrHistory);
+          }
+        });
+      }
+    });
+
+    if (els.btnStartCstrStream) els.btnStartCstrStream.addEventListener('click', startCstrStream);
+    if (els.btnStopCstrStream) els.btnStopCstrStream.addEventListener('click', stopCstrStream);
 
     els.selLight.addEventListener('change', () => loadTxyDiagram());
     els.selHeavy.addEventListener('change', () => loadTxyDiagram());
@@ -1816,6 +2310,8 @@
     ], 'C6H6', 0.5, 368.15);
 
     runPlantSimulation();
+    drawCstrLiveChart([]);
+    initSignalR();
   </script>
 </body>
 </html>
