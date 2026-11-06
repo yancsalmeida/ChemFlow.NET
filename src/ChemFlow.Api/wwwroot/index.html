@@ -493,6 +493,7 @@
 
       <button class="btn-primary" id="btnSimulate">Solve DAG Flowsheet &amp; Persist to SQL</button>
       <button class="btn-secondary" id="btnSimulateRecycle" style="width: 100%; margin-top: 0.5rem; border-color: #a855f7; color: #d8b4fe; background: rgba(168, 85, 247, 0.1);">Solve Closed-Loop Recycle (Wegstein Secant)</button>
+      <button class="btn-secondary" id="btnSimulateDistillation" style="width: 100%; margin-top: 0.5rem; border-color: #7c3aed; color: #c4b5fd; background: rgba(124, 58, 237, 0.12);">Solve Rigorous Distillation (Wang-Henke MESH)</button>
 
       <div class="panel-header" style="margin-top: 1.5rem;">
         <h2>Binary VLE T-x-y Diagram</h2>
@@ -785,6 +786,7 @@
       selHeavy: document.getElementById('selHeavy'),
       btnSimulate: document.getElementById('btnSimulate'),
       btnSimulateRecycle: document.getElementById('btnSimulateRecycle'),
+      btnSimulateDistillation: document.getElementById('btnSimulateDistillation'),
       streamTableBody: document.getElementById('streamTableBody'),
       kpiDuty: document.getElementById('kpiDuty'),
       kpiBeta: document.getElementById('kpiBeta'),
@@ -967,6 +969,60 @@
         }
       } catch (err) {
         console.error('Recycle simulation execution failed:', err);
+      }
+    }
+
+    async function runDistillationSimulation() {
+      updateLabels();
+      const payload = {
+        feedFlowMolPerSec: parseFloat(els.inpF1.value) || 50.0,
+        feedTemperatureKelvin: parseFloat(els.inpT1.value) || 340.0,
+        benzeneMoleFraction: 0.50,
+        numberOfStages: 10,
+        feedStage: 5,
+        refluxRatio: 2.0,
+        distillateRateMolPerSec: 25.0,
+        columnPressureKpa: parseFloat(els.inpPdrum.value) || 101.325,
+        model: "Peng-Robinson"
+      };
+
+      try {
+        const res = await fetch('/api/simulations/distillation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        renderPlantData(data);
+        currentRunId = data.savedSimulationRunId;
+
+        // Custom KPIs for Distillation Column
+        els.kpiDuty.textContent = `Qc:${data.condenserDutyKilowatts.toFixed(0)}/Qr:${data.reboilerDutyKilowatts.toFixed(0)} kW`;
+        els.kpiBeta.textContent = `N=${data.numberOfStages} (Nf=${data.feedStage}, R=${data.refluxRatio})`;
+        els.kpiVaporY.textContent = `xD: ${(data.distillate.moleFractions['C6H6'] * 100).toFixed(1)}% | xB: ${(data.bottoms.moleFractions['C7H8'] * 100).toFixed(1)}%`;
+        els.dagOrderBadge.textContent = `Distillation: ${data.columnName} (${data.thermodynamicModel} BP MESH - ${data.iterations} iters)`;
+        els.dagOrderBadge.style.color = '#c4b5fd';
+
+        const [topologyRes, reportRes] = await Promise.all([
+          fetch(data.topologyUrl || `/api/simulations/${currentRunId}/topology`),
+          fetch(data.balanceReportUrl || `/api/simulations/${currentRunId}/report`)
+        ]);
+
+        if (topologyRes.ok) {
+          const topology = await topologyRes.json();
+          renderTopologyData(topology, currentRunId);
+        }
+
+        if (reportRes.ok) {
+          const report = await reportRes.json();
+          renderBalanceReport(report, currentRunId);
+        }
+
+        if (data.stageProfiles && data.stageProfiles.length > 0) {
+          await loadTxyDiagram(0.50, data.stageProfiles[0].temperatureKelvin);
+        }
+      } catch (err) {
+        console.error('Distillation simulation execution failed:', err);
       }
     }
 
@@ -1206,6 +1262,7 @@
     els.selHeavy.addEventListener('change', () => loadTxyDiagram());
     els.btnSimulate.addEventListener('click', runPlantSimulation);
     els.btnSimulateRecycle.addEventListener('click', runRecycleSimulation);
+    els.btnSimulateDistillation.addEventListener('click', runDistillationSimulation);
 
     updateLabels();
     renderPlantData({

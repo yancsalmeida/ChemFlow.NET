@@ -4,7 +4,7 @@
 [![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4.svg?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Thermodynamics](https://img.shields.io/badge/EOS-Peng--Robinson%20(1976)-00599C.svg)](#thermodynamics--process-physics)
 [![Native C11 FFI](https://img.shields.io/badge/C11_FFI-ReactorCore.C-00599C?logo=c)](https://github.com/yancsalmeida/ReactorCore.C)
-[![Tests](https://img.shields.io/badge/Tests-50%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
+[![Tests](https://img.shields.io/badge/Tests-56%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](docker-compose.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -99,6 +99,7 @@ using a safeguarded Newton-Raphson solver with automatic fallback to bisection r
 - **`Mixer`**: Adiabatic multi-stream mixing with rigorous component mass conservation and enthalpy balance root-finding for outlet temperature.
 - **`HeaterCooler`**: Sensible and phase-change thermal duty ($\dot{Q}$ in $\text{kW}$) calculation for target temperatures and pressures.
 - **`FlashDrum`**: Isothermal/isobaric vapor-liquid phase separator.
+- **`DistillationColumn` (Rigorous RadFrac / MESH Solver):** Multicomponent staged fractionation column solving the decoupled MESH (Material, Equilibrium, Summation, and Heat) equations via the **Wang-Henke Bubble Point (BP)** algorithm. Employs the **Thomas Algorithm (TDMA)** to invert tridiagonal component material balance matrices in $O(N)$ operations with guaranteed non-negative M-matrix property ($x_{j,i}^* \ge 0$). Enforces machine-precision overall component and total mass closure ($\Delta m / m < 10^{-14}$) via **Holland's $\theta$-Method**, calculates damped stage temperature profiles, and computes rigorous condenser cooling ($Q_C < 0$) and reboiler heating ($Q_R > 0$) enthalpy duties.
 - **`Splitter`**: Stream divider partitioning a single inlet into multiple outlets according to fractional splits ($\sum \alpha_k = 1.0$), preserving $(T, P, z_i)$.
 - **`ConversionReactor`**: Stoichiometric reactor with limiting-reactant validation, fractional conversion, and heat of reaction ($\Delta H_{\text{rxn}}^\circ$) energy balance.
 - **`ContinuousStirredTankReactor`**: Dynamic CSTR unit operation with non-linear Arrhenius kinetics and jacket heat exchange ($UA(T - T_c)$), integrated via 4th-Order Runge-Kutta (RK4) powered natively by [**`ReactorCore.C`**](https://github.com/yancsalmeida/ReactorCore.C) (`libreactorcore.so`) through C-ABI P/Invoke.
@@ -119,6 +120,7 @@ using a safeguarded Newton-Raphson solver with automatic fallback to bisection r
 | `POST` | `/api/thermo/txy` | Generate binary $T\text{-}x\text{-}y$ phase equilibrium isobaric curves |
 | `POST` | `/api/simulations/benchmark` | Execute and persist flash separation flowsheet (`Mixer` $\rightarrow$ `Heater` $\rightarrow$ `FlashDrum`) |
 | `POST` | `/api/simulations/recycle` | Solve closed-loop recycle flowsheet (`Mixer` $\rightarrow$ `FlashDrum` $\rightarrow$ `Splitter` $\rightarrow$ `Mixer`) with Wegstein acceleration |
+| `POST` | `/api/simulations/distillation` | Rigorous multicomponent staged distillation column (`Wang-Henke BP MESH` & `Thomas Algorithm`) returning stage profiles and duties |
 | `GET` | `/api/simulations` | Retrieve historical simulation runs from SQLite |
 | `GET` | `/api/simulations/{id}` | Retrieve detailed stream results for a simulation run |
 | `GET` | `/api/simulations/{id}/topology` | Export flowsheet graph topology (JSON or Graphviz DOT via `?format=dot`) |
@@ -166,7 +168,7 @@ dotnet test ChemFlow.sln
 ```
 
 ```text
-Passed! - Failed: 0, Passed: 50, Skipped: 0, Total: 50, Duration: 698 ms
+Passed! - Failed: 0, Passed: 56, Skipped: 0, Total: 56, Duration: 721 ms
 ```
 
 ---

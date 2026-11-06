@@ -632,11 +632,23 @@ public sealed class ProcessFlowsheet
                 "FlashDrum" => ("#F3E8FF", "#9333EA"),
                 "ConversionReactor" => ("#FCE7F3", "#DB2777"),
                 "Splitter" => ("#E0E7FF", "#4F46E5"),
+                "DistillationColumn" => ("#EDE9FE", "#7C3AED"),
                 _ => ("#F1F5F9", "#475569")
             };
 
             double dutyKw = unit.EnergyDutyWatts / 1000.0;
-            string dutyStr = Math.Abs(dutyKw) > 1e-3 ? $" | Q = {dutyKw:F2} kW" : "";
+            string dutyStr;
+            if (unit is DistillationColumn col)
+            {
+                double qcKw = col.CondenserDutyWatts / 1000.0;
+                double qrKw = col.ReboilerDutyWatts / 1000.0;
+                dutyStr = $" | N={col.NumberOfStages}, R={col.RefluxRatio:F1} | Qc={qcKw:F1} kW, Qr={qrKw:F1} kW";
+            }
+            else
+            {
+                dutyStr = Math.Abs(dutyKw) > 1e-3 ? $" | Q = {dutyKw:F2} kW" : "";
+            }
+
             string recordLabel = $"{{{unit.Id} ({EscapeDot(unit.Name)})|{unit.UnitType}{dutyStr}}}";
 
             sb.AppendLine($"    \"{unitNodeId}\" [label=\"{recordLabel}\", shape=record, style=\"filled,rounded\", fillcolor=\"{fillColor}\", color=\"{strokeColor}\", penwidth=1.5];");

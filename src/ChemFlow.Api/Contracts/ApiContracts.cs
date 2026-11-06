@@ -116,3 +116,52 @@ public sealed record PlantSimulationResponse(
     int RecycleIterations = 1,
     IReadOnlyList<string>? TearStreams = null
 );
+
+public sealed record DistillationSimulationRequest(
+    [property: DefaultValue(50.0)] double FeedFlowMolPerSec = 50.0,
+    [property: DefaultValue(340.0)] double FeedTemperatureKelvin = 340.0,
+    [property: DefaultValue(0.50)] double BenzeneMoleFraction = 0.50,
+    [property: DefaultValue(10)] int NumberOfStages = 10,
+    [property: DefaultValue(5)] int FeedStage = 5,
+    [property: DefaultValue(2.0)] double RefluxRatio = 2.0,
+    [property: DefaultValue(25.0)] double DistillateRateMolPerSec = 25.0,
+    [property: DefaultValue(101.325)] double ColumnPressureKpa = 101.325,
+    [property: DefaultValue("Peng-Robinson")] string? Model = "Peng-Robinson"
+);
+
+public sealed record DistillationStageProfileDto(
+    int StageIndex,
+    double TemperatureKelvin,
+    double TemperatureCelsius,
+    double PressureKpa,
+    double LiquidFlowMolPerSec,
+    double VaporFlowMolPerSec,
+    IReadOnlyDictionary<string, double> LiquidCompositionX,
+    IReadOnlyDictionary<string, double> VaporCompositionY
+);
+
+public sealed record DistillationSimulationResponse(
+    long SavedSimulationRunId,
+    string ColumnId,
+    string ColumnName,
+    string ThermodynamicModel,
+    int NumberOfStages,
+    int FeedStage,
+    double RefluxRatio,
+    int Iterations,
+    bool IsConverged,
+    double CondenserDutyKilowatts,
+    double ReboilerDutyKilowatts,
+    double NetEnergyDutyKilowatts,
+    bool IsMassConserved,
+    bool IsEnergyConserved,
+    double MassBalanceRelativeError,
+    double EnergyBalanceRelativeError,
+    IReadOnlyList<UnitResultDto> Units,
+    IReadOnlyList<StreamStateDto> Streams,
+    StreamStateDto Distillate,
+    StreamStateDto Bottoms,
+    IReadOnlyList<DistillationStageProfileDto> StageProfiles,
+    string? TopologyUrl = null,
+    string? BalanceReportUrl = null
+);

@@ -353,6 +353,138 @@ app.MapPost("/api/simulations/recycle", (
 .WithName("RunRecycleSimulation")
 .WithOpenApi();
 
+app.MapPost("/api/simulations/distillation", (
+    DistillationSimulationRequest request,
+    ICompoundRepository compoundRepo,
+    ISimulationHistoryRepository historyRepo,
+    PengRobinsonThermodynamicPackage prPackage,
+    RaoultThermodynamicPackage raoultPackage) =>
+{
+    IThermodynamicPackage thermo = string.Equals(request.Model, "Raoult", StringComparison.OrdinalIgnoreCase)
+        ? raoultPackage
+        : prPackage;
+
+    ChemicalCompound benzene = compoundRepo.GetById("C6H6")
+        ?? throw new InvalidOperationException("Compound C6H6 not found.");
+    ChemicalCompound toluene = compoundRepo.GetById("C7H8")
+        ?? throw new InvalidOperationException("Compound C7H8 not found.");
+
+    IReadOnlyList<ChemicalCompound> compounds = [benzene, toluene];
+
+    double zB = Math.Clamp(request.BenzeneMoleFraction, 0.01, 0.99);
+    double zT = 1.0 - zB;
+
+    var feedStream = new MaterialStream(
+        "S-FEED",
+        "Distillation Feed",
+        compounds,
+        request.FeedFlowMolPerSec,
+        request.FeedTemperatureKelvin,
+        request.ColumnPressureKpa,
+        [zB, zT]
+    );
+
+    var distillate = new MaterialStream("S-DIST", "Distillate Product", compounds);
+    var bottoms = new MaterialStream("S-BTM", "Bottoms Residue", compounds);
+
+    var column = new DistillationColumn(
+        id: "C-100",
+        name: "Fractionation Column",
+        feedStream: feedStream,
+        distillateOutlet: distillate,
+        bottomsOutlet: bottoms,
+        numberOfStages: request.NumberOfStages,
+        feedStage: request.FeedStage,
+        refluxRatio: request.RefluxRatio,
+        distillateRateMolPerSec: request.DistillateRateMolPerSec,
+        columnPressureKpa: request.ColumnPressureKpa
+    );
+
+    var flowsheet = new ProcessFlowsheet("Fractionation Column Simulation", thermo);
+    flowsheet.AddUnit(column);
+
+    IReadOnlyList<IUnitOperation> executedOrder = flowsheet.Solve();
+    FlowsheetBalanceReport balanceReport = flowsheet.GenerateBalanceReport();
+    long runId = historyRepo.SaveSimulationRun(flowsheet, executedOrder);
+
+    static StreamStateDto MapStream(MaterialStream s)
+    {
+        var fractions = new Dictionary<string, double>();
+        for (int i = 0; i < s.Compounds.Count; i++)
+            fractions[s.Compounds[i].Id] = Math.Round(s.CompositionZ[i], 4);
+
+        return new StreamStateDto(
+            s.Id,
+            s.Name,
+            s.Phase.ToString(),
+            Math.Round(s.MolarFlowRateMolPerSec, 4),
+            Math.Round(s.TemperatureKelvin, 2),
+            Math.Round(s.TemperatureKelvin - 273.15, 2),
+            Math.Round(s.PressureKpa, 2),
+            Math.Round(s.VaporFractionBeta, 4),
+            Math.Round(s.MolarEnthalpyJPerMol, 2),
+            Math.Round(s.TotalEnthalpyFlowWatts / 1000.0, 3),
+            fractions
+        );
+    }
+
+    var stageProfiles = column.StageProfiles.Select(p =>
+    {
+        var xDict = new Dictionary<string, double>();
+        var yDict = new Dictionary<string, double>();
+        for (int i = 0; i < compounds.Count; i++)
+        {
+            xDict[compounds[i].Id] = Math.Round(p.LiquidCompositionX[i], 4);
+            yDict[compounds[i].Id] = Math.Round(p.VaporCompositionY[i], 4);
+        }
+
+        return new DistillationStageProfileDto(
+            StageIndex: p.StageIndex,
+            TemperatureKelvin: Math.Round(p.TemperatureKelvin, 2),
+            TemperatureCelsius: Math.Round(p.TemperatureKelvin - 273.15, 2),
+            PressureKpa: Math.Round(p.PressureKpa, 2),
+            LiquidFlowMolPerSec: Math.Round(p.LiquidFlowMolPerSec, 4),
+            VaporFlowMolPerSec: Math.Round(p.VaporFlowMolPerSec, 4),
+            LiquidCompositionX: xDict,
+            VaporCompositionY: yDict
+        );
+    }).ToList();
+
+    var unitDtos = executedOrder
+        .Select(u => new UnitResultDto(u.Id, u.Name, u.UnitType, Math.Round(u.EnergyDutyWatts / 1000.0, 3)))
+        .ToList();
+
+    var allStreams = flowsheet.Streams.Select(MapStream).ToList();
+
+    return Results.Ok(new DistillationSimulationResponse(
+        SavedSimulationRunId: runId,
+        ColumnId: column.Id,
+        ColumnName: column.Name,
+        ThermodynamicModel: thermo.Name,
+        NumberOfStages: column.NumberOfStages,
+        FeedStage: column.FeedStage,
+        RefluxRatio: column.RefluxRatio,
+        Iterations: column.Iterations,
+        IsConverged: column.IsConverged,
+        CondenserDutyKilowatts: Math.Round(column.CondenserDutyWatts / 1000.0, 3),
+        ReboilerDutyKilowatts: Math.Round(column.ReboilerDutyWatts / 1000.0, 3),
+        NetEnergyDutyKilowatts: Math.Round(column.EnergyDutyWatts / 1000.0, 3),
+        IsMassConserved: balanceReport.IsMassConserved,
+        IsEnergyConserved: balanceReport.IsEnergyConserved,
+        MassBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeMassError, 8),
+        EnergyBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeEnthalpyError, 8),
+        Units: unitDtos,
+        Streams: allStreams,
+        Distillate: MapStream(distillate),
+        Bottoms: MapStream(bottoms),
+        StageProfiles: stageProfiles,
+        TopologyUrl: $"/api/simulations/{runId}/topology",
+        BalanceReportUrl: $"/api/simulations/{runId}/report"
+    ));
+})
+.WithName("RunDistillationSimulation")
+.WithOpenApi();
+
 app.MapGet("/api/simulations", (ISimulationHistoryRepository historyRepo) =>
     Results.Ok(historyRepo.GetRecentRuns(20)))
 .WithName("GetRecentSimulations")

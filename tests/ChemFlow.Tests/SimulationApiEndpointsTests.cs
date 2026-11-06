@@ -123,4 +123,44 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.Contains("color=\"#a855f7\"", dotText);
         Assert.Contains("[Recycle/Tear]", dotText);
     }
+
+    [Fact]
+    public async Task DistillationSimulation_Endpoint_SolvesAndReturnsProfilesAndDuties()
+    {
+        // 1. POST /api/simulations/distillation
+        var request = new DistillationSimulationRequest(
+            FeedFlowMolPerSec: 50.0,
+            FeedTemperatureKelvin: 340.0,
+            BenzeneMoleFraction: 0.50,
+            NumberOfStages: 10,
+            FeedStage: 5,
+            RefluxRatio: 2.0,
+            DistillateRateMolPerSec: 25.0,
+            ColumnPressureKpa: 101.325,
+            Model: "Peng-Robinson"
+        );
+
+        HttpResponseMessage response = await _client.PostAsJsonAsync("/api/simulations/distillation", request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        DistillationSimulationResponse? result = await response.Content.ReadFromJsonAsync<DistillationSimulationResponse>();
+        Assert.NotNull(result);
+        Assert.True(result.SavedSimulationRunId > 0);
+        Assert.True(result.IsConverged);
+        Assert.True(result.CondenserDutyKilowatts < 0.0);
+        Assert.True(result.ReboilerDutyKilowatts > 0.0);
+        Assert.True(result.IsMassConserved);
+        Assert.True(result.IsEnergyConserved);
+        Assert.Equal(10, result.StageProfiles.Count);
+        Assert.True(result.Distillate.MoleFractions["C6H6"] > 0.85);
+        Assert.True(result.Bottoms.MoleFractions["C7H8"] > 0.85);
+
+        // 2. Verify saved flowsheet topology via GET /api/simulations/{id}/topology
+        HttpResponseMessage topoResp = await _client.GetAsync($"/api/simulations/{result.SavedSimulationRunId}/topology");
+        Assert.Equal(HttpStatusCode.OK, topoResp.StatusCode);
+        FlowsheetTopology? topology = await topoResp.Content.ReadFromJsonAsync<FlowsheetTopology>();
+        Assert.NotNull(topology);
+        Assert.Equal("Fractionation Column Simulation", topology.FlowsheetName);
+        Assert.Contains(topology.Units, u => u.UnitType == "DistillationColumn");
+    }
 }
