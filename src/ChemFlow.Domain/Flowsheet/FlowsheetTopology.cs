@@ -29,7 +29,8 @@ public sealed record StreamTopologyEdge(
     string Phase,
     double VaporFractionBeta,
     double TotalEnthalpyFlowWatts,
-    IReadOnlyDictionary<string, double> Composition
+    IReadOnlyDictionary<string, double> Composition,
+    bool IsTearStream = false
 );
 
 /// <summary>
@@ -43,5 +44,6 @@ public sealed record FlowsheetTopology(
     IReadOnlyDictionary<string, IReadOnlyList<string>> AdjacencyList,
     IReadOnlyList<string> ExecutionOrder,
     bool IsAcyclic,
-    string DotGraph
+    string DotGraph,
+    IReadOnlyList<string>? TearStreamIds = null
 );

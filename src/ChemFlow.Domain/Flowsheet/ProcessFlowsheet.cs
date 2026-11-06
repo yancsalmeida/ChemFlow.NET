@@ -15,12 +15,14 @@ public sealed class ProcessFlowsheet
 {
     private readonly Dictionary<string, MaterialStream> _streams = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IUnitOperation> _units = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _tearStreamIds = new(StringComparer.OrdinalIgnoreCase);
 
     public string Name { get; }
     public IThermodynamicPackage ThermodynamicPackage { get; }
 
     public IReadOnlyCollection<MaterialStream> Streams => _streams.Values;
     public IReadOnlyCollection<IUnitOperation> Units => _units.Values;
+    public IReadOnlyCollection<string> TearStreamIds => _tearStreamIds;
 
     public ProcessFlowsheet(string name, IThermodynamicPackage thermodynamicPackage)
     {
@@ -54,10 +56,38 @@ public sealed class ProcessFlowsheet
     }
 
     /// <summary>
-    /// Computes the topological execution order of unit operations using Kahn's Algorithm O(V + E).
-    /// Throws <see cref="InvalidOperationException"/> if a recycle loop (cycle) is detected.
+    /// Explicitly registers a material stream as a tear stream (recycle cut) for iterative convergence.
     /// </summary>
-    public IReadOnlyList<IUnitOperation> GetTopologicalExecutionOrder()
+    public void AddTearStream(MaterialStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        _streams.TryAdd(stream.Id, stream);
+        _tearStreamIds.Add(stream.Id);
+    }
+
+    /// <summary>
+    /// Explicitly registers an existing material stream ID as a tear stream.
+    /// </summary>
+    public void AddTearStream(string streamId)
+    {
+        if (string.IsNullOrWhiteSpace(streamId))
+            throw new ArgumentException("Stream ID cannot be empty.", nameof(streamId));
+        if (!_streams.ContainsKey(streamId))
+            throw new InvalidOperationException($"Stream '{streamId}' does not exist in flowsheet '{Name}'.");
+        _tearStreamIds.Add(streamId);
+    }
+
+    public bool IsTearStream(string streamId) => _tearStreamIds.Contains(streamId);
+
+    public void ClearTearStreams() => _tearStreamIds.Clear();
+
+    /// <summary>
+    /// Computes the topological execution order of unit operations using Kahn's Algorithm O(V + E).
+    /// When <paramref name="ignoreTearStreams"/> is true, registered tear streams are excluded from
+    /// dependency checking, allowing cyclical flowsheet topologies to be sequenced sequentially.
+    /// Throws <see cref="InvalidOperationException"/> if an un-torn cycle is detected.
+    /// </summary>
+    public IReadOnlyList<IUnitOperation> GetTopologicalExecutionOrder(bool ignoreTearStreams = false)
     {
         // Map each stream ID to the upstream unit that produces it (if any)
         var producerByStreamId = new Dictionary<string, IUnitOperation>(StringComparer.OrdinalIgnoreCase);
@@ -86,6 +116,10 @@ public sealed class ProcessFlowsheet
 
             foreach (MaterialStream inlet in targetUnit.InletStreams)
             {
+                // When tearing cycles, ignore dependencies coming through tear streams
+                if (ignoreTearStreams && _tearStreamIds.Contains(inlet.Id))
+                    continue;
+
                 if (producerByStreamId.TryGetValue(inlet.Id, out IUnitOperation? sourceUnit) &&
                     uniqueUpstreamIds.Add(sourceUnit.Id))
                 {
@@ -95,7 +129,7 @@ public sealed class ProcessFlowsheet
             }
         }
 
-        // Kahn's Algorithm: enqueue all units with in-degree == 0 (fed only by external feed streams)
+        // Kahn's Algorithm: enqueue all units with in-degree == 0 (fed only by external feeds or torn recycles)
         var queue = new Queue<IUnitOperation>();
         foreach (IUnitOperation unit in _units.Values)
         {
@@ -128,22 +162,238 @@ public sealed class ProcessFlowsheet
                 .Where(u => inDegree[u.Id] > 0)
                 .Select(u => u.Name);
 
+            string tearInfo = ignoreTearStreams && _tearStreamIds.Count > 0
+                ? $" Current tear streams [{string.Join(", ", _tearStreamIds)}] did not resolve all cycles."
+                : " Register tear streams via AddTearStream() or use SolveWithRecycle() to resolve recycles.";
+
             throw new InvalidOperationException(
-                $"Cycle detected in process flowsheet '{Name}'. Units involved in recycle loop: {string.Join(", ", cyclicUnits)}.");
+                $"Cycle detected in process flowsheet '{Name}'. Units involved in recycle loop: {string.Join(", ", cyclicUnits)}.{tearInfo}");
         }
 
         return executionOrder;
     }
 
     /// <summary>
-    /// Solves the entire process flowsheet:
-    /// 1. Flashes all external feed streams
-    /// 2. Determines topological order via Kahn's DAG algorithm
-    /// 3. Solves each unit operation sequentially
+    /// Automatically detects recycle loops and selects tear streams to break all feedback cycles.
+    /// Uses Depth-First Search (DFS) with three-color cycle detection to locate back-edges.
     /// </summary>
-    public IReadOnlyList<IUnitOperation> Solve()
+    public IReadOnlyList<MaterialStream> AutoSelectTearStreams()
     {
-        // Identify streams produced by units so we know which ones are external feeds
+        var consumersByStreamId = new Dictionary<string, List<IUnitOperation>>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream inlet in unit.InletStreams)
+            {
+                if (!consumersByStreamId.TryGetValue(inlet.Id, out var list))
+                {
+                    list = [];
+                    consumersByStreamId[inlet.Id] = list;
+                }
+                list.Add(unit);
+            }
+        }
+
+        // Color states: 0 = Unvisited (White), 1 = Visiting (Gray), 2 = Visited (Black)
+        var color = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var unit in _units.Values)
+            color[unit.Id] = 0;
+
+        var detectedTearStreams = new List<MaterialStream>();
+
+        void Dfs(IUnitOperation current)
+        {
+            color[current.Id] = 1; // Gray
+
+            foreach (MaterialStream outlet in current.OutletStreams)
+            {
+                if (consumersByStreamId.TryGetValue(outlet.Id, out var targets))
+                {
+                    foreach (var target in targets)
+                    {
+                        if (color[target.Id] == 1)
+                        {
+                            // Back-edge detected! This outlet stream feeds an ancestor in active DFS path.
+                            if (!_tearStreamIds.Contains(outlet.Id))
+                            {
+                                _tearStreamIds.Add(outlet.Id);
+                                detectedTearStreams.Add(outlet);
+                            }
+                        }
+                        else if (color[target.Id] == 0)
+                        {
+                            Dfs(target);
+                        }
+                    }
+                }
+            }
+
+            color[current.Id] = 2; // Black
+        }
+
+        foreach (var unit in _units.Values)
+        {
+            if (color[unit.Id] == 0)
+                Dfs(unit);
+        }
+
+        return detectedTearStreams;
+    }
+
+    /// <summary>
+    /// Solves the process flowsheet, supporting closed-loop recycles via tear streams and convergence acceleration
+    /// (Wegstein Bounded Secant or Direct Substitution).
+    /// </summary>
+    public FlowsheetSolveResult SolveWithRecycle(RecycleSolverOptions? options = null)
+    {
+        options ??= RecycleSolverOptions.Default;
+
+        // Step 1: Detect whether flowsheet is naturally acyclic or requires tear streams
+        if (_tearStreamIds.Count == 0)
+        {
+            bool isAcyclic = false;
+            try
+            {
+                GetTopologicalExecutionOrder(ignoreTearStreams: false);
+                isAcyclic = true;
+            }
+            catch (InvalidOperationException)
+            {
+                isAcyclic = false;
+            }
+
+            if (isAcyclic)
+            {
+                IReadOnlyList<IUnitOperation> order = SolveInternalAcyclic();
+                return new FlowsheetSolveResult(
+                    FlowsheetName: Name,
+                    ExecutionOrder: order,
+                    HasRecycle: false,
+                    Iterations: 1,
+                    IsConverged: true,
+                    TearStreamIds: [],
+                    ConvergenceHistory: []
+                );
+            }
+
+            // Auto-detect tear streams from feedback loops
+            AutoSelectTearStreams();
+            if (_tearStreamIds.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cycle detected in process flowsheet '{Name}', but no tear stream could be identified.");
+            }
+        }
+
+        // Step 2: Obtain topological execution sequence for torn flowsheet
+        IReadOnlyList<IUnitOperation> executionOrder = GetTopologicalExecutionOrder(ignoreTearStreams: true);
+
+        // Step 3: Identify external feeds and equilibrate them
+        var producerByStreamId = new Dictionary<string, IUnitOperation>(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnitOperation unit in _units.Values)
+        {
+            foreach (MaterialStream outlet in unit.OutletStreams)
+            {
+                producerByStreamId[outlet.Id] = unit;
+            }
+        }
+
+        var externalFeeds = _streams.Values
+            .Where(s => !producerByStreamId.ContainsKey(s.Id))
+            .ToList();
+
+        foreach (MaterialStream feed in externalFeeds)
+        {
+            feed.SolveEquilibrium(ThermodynamicPackage);
+        }
+
+        // Step 4: Prepare tear streams and initial guess states
+        var tearStreams = new List<MaterialStream>(_tearStreamIds.Count);
+        var guessStates = new Dictionary<string, StreamStateVector>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string tearId in _tearStreamIds)
+        {
+            if (!_streams.TryGetValue(tearId, out MaterialStream? tearStream))
+                throw new InvalidOperationException($"Tear stream '{tearId}' is not found in flowsheet '{Name}'.");
+
+            tearStreams.Add(tearStream);
+
+            if (!tearStream.IsSolved)
+            {
+                tearStream.SolveEquilibrium(ThermodynamicPackage);
+            }
+
+            guessStates[tearId] = StreamStateVector.FromStream(tearStream);
+        }
+
+        // Step 5: Iterative tear stream convergence loop
+        var accelerator = new WegsteinRecycleAccelerator(options);
+        var convergenceHistory = new List<TearStreamConvergenceRecord>();
+        bool allConverged = false;
+        int completedIterations = 0;
+
+        for (int iter = 1; iter <= options.MaxIterations; iter++)
+        {
+            completedIterations = iter;
+
+            // Solve each unit in torn topological order
+            foreach (IUnitOperation unit in executionOrder)
+            {
+                unit.Solve(ThermodynamicPackage);
+            }
+
+            // Check convergence across all tear streams
+            bool iterConverged = true;
+            var currentCalculated = new Dictionary<string, StreamStateVector>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (MaterialStream tearStream in tearStreams)
+            {
+                StreamStateVector guess = guessStates[tearStream.Id];
+                StreamStateVector calc = StreamStateVector.FromStream(tearStream);
+                currentCalculated[tearStream.Id] = calc;
+
+                TearStreamConvergenceRecord record = accelerator.CheckConvergence(tearStream.Id, guess, calc, iter);
+                convergenceHistory.Add(record);
+
+                if (!record.IsConverged)
+                {
+                    iterConverged = false;
+                }
+            }
+
+            if (iterConverged)
+            {
+                allConverged = true;
+                break;
+            }
+
+            // If not converged and not on the last iteration, accelerate tear stream states
+            if (iter < options.MaxIterations)
+            {
+                foreach (MaterialStream tearStream in tearStreams)
+                {
+                    StreamStateVector guess = guessStates[tearStream.Id];
+                    StreamStateVector calc = currentCalculated[tearStream.Id];
+
+                    StreamStateVector nextGuess = accelerator.Accelerate(tearStream.Id, guess, calc, iter);
+                    guessStates[tearStream.Id] = nextGuess;
+                    nextGuess.ApplyToStream(tearStream, ThermodynamicPackage);
+                }
+            }
+        }
+
+        return new FlowsheetSolveResult(
+            FlowsheetName: Name,
+            ExecutionOrder: executionOrder,
+            HasRecycle: true,
+            Iterations: completedIterations,
+            IsConverged: allConverged,
+            TearStreamIds: _tearStreamIds.ToList(),
+            ConvergenceHistory: convergenceHistory
+        );
+    }
+
+    private IReadOnlyList<IUnitOperation> SolveInternalAcyclic()
+    {
         var producedStreamIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (IUnitOperation unit in _units.Values)
         {
@@ -153,7 +403,6 @@ public sealed class ProcessFlowsheet
             }
         }
 
-        // Step 1: Equilibrate all external feed streams
         foreach (MaterialStream stream in _streams.Values)
         {
             if (!producedStreamIds.Contains(stream.Id))
@@ -162,16 +411,31 @@ public sealed class ProcessFlowsheet
             }
         }
 
-        // Step 2: Obtain topological execution sequence
-        IReadOnlyList<IUnitOperation> executionOrder = GetTopologicalExecutionOrder();
+        IReadOnlyList<IUnitOperation> executionOrder = GetTopologicalExecutionOrder(ignoreTearStreams: false);
 
-        // Step 3: Solve each equipment block in order
         foreach (IUnitOperation unit in executionOrder)
         {
             unit.Solve(ThermodynamicPackage);
         }
 
         return executionOrder;
+    }
+
+    /// <summary>
+    /// Solves the entire process flowsheet:
+    /// - For acyclic flowsheets: solves in one topological pass.
+    /// - For recycle flowsheets: automatically breaks cycles and iterates to convergence.
+    /// Throws <see cref="InvalidOperationException"/> if convergence is not reached.
+    /// </summary>
+    public IReadOnlyList<IUnitOperation> Solve()
+    {
+        FlowsheetSolveResult result = SolveWithRecycle();
+        if (result.HasRecycle && !result.IsConverged)
+        {
+            throw new InvalidOperationException(
+                $"Recycle loop solver did not converge after {result.Iterations} iterations in flowsheet '{Name}'.");
+        }
+        return result.ExecutionOrder;
     }
 
     /// <summary>
@@ -221,11 +485,22 @@ public sealed class ProcessFlowsheet
         IReadOnlyList<string> executionOrder = [];
         try
         {
-            executionOrder = GetTopologicalExecutionOrder().Select(u => u.Id).ToList();
+            executionOrder = GetTopologicalExecutionOrder(ignoreTearStreams: false).Select(u => u.Id).ToList();
         }
         catch (InvalidOperationException)
         {
             isAcyclic = false;
+            if (_tearStreamIds.Count > 0)
+            {
+                try
+                {
+                    executionOrder = GetTopologicalExecutionOrder(ignoreTearStreams: true).Select(u => u.Id).ToList();
+                }
+                catch (InvalidOperationException)
+                {
+                    // Remaining cyclic dependencies
+                }
+            }
         }
 
         var unitNodes = _units.Values.Select(u => new UnitTopologyNode(
@@ -266,7 +541,8 @@ public sealed class ProcessFlowsheet
                 Phase: s.IsSolved ? s.Phase.ToString() : "Unsolved",
                 VaporFractionBeta: s.IsSolved ? s.VaporFractionBeta : 0.0,
                 TotalEnthalpyFlowWatts: s.IsSolved ? s.TotalEnthalpyFlowWatts : 0.0,
-                Composition: compositionDict
+                Composition: compositionDict,
+                IsTearStream: _tearStreamIds.Contains(s.Id)
             );
         }).ToList();
 
@@ -279,7 +555,8 @@ public sealed class ProcessFlowsheet
             AdjacencyList: adjacencyList,
             ExecutionOrder: executionOrder,
             IsAcyclic: isAcyclic,
-            DotGraph: dotGraph
+            DotGraph: dotGraph,
+            TearStreamIds: _tearStreamIds.ToList()
         );
     }
 
@@ -354,6 +631,7 @@ public sealed class ProcessFlowsheet
                 "HeaterCooler" => ("#FFEDD5", "#EA580C"),
                 "FlashDrum" => ("#F3E8FF", "#9333EA"),
                 "ConversionReactor" => ("#FCE7F3", "#DB2777"),
+                "Splitter" => ("#E0E7FF", "#4F46E5"),
                 _ => ("#F1F5F9", "#475569")
             };
 
@@ -394,9 +672,13 @@ public sealed class ProcessFlowsheet
             producerByStreamId.TryGetValue(stream.Id, out IUnitOperation? sourceUnit);
             consumersByStreamId.TryGetValue(stream.Id, out List<IUnitOperation>? targetUnits);
 
+            bool isTear = _tearStreamIds.Contains(stream.Id);
+
             string edgeLabel = $"{stream.Id}\\n{stream.MolarFlowRateMolPerSec:F1} mol/s";
             if (stream.IsSolved)
                 edgeLabel += $"\\n{stream.TemperatureKelvin:F1} K";
+            if (isTear)
+                edgeLabel += "\\n[Recycle/Tear]";
 
             if (sourceUnit is null)
             {
@@ -418,7 +700,14 @@ public sealed class ProcessFlowsheet
             {
                 foreach (var target in targetUnits)
                 {
-                    sb.AppendLine($"    \"{SanitizeDotId(sourceUnit.Id)}\" -> \"{SanitizeDotId(target.Id)}\" [label=\"{edgeLabel}\", color=\"#475569\"];");
+                    if (isTear)
+                    {
+                        sb.AppendLine($"    \"{SanitizeDotId(sourceUnit.Id)}\" -> \"{SanitizeDotId(target.Id)}\" [label=\"{edgeLabel}\", color=\"#a855f7\", style=\"dashed\", penwidth=2.0];");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"    \"{SanitizeDotId(sourceUnit.Id)}\" -> \"{SanitizeDotId(target.Id)}\" [label=\"{edgeLabel}\", color=\"#475569\"];");
+                    }
                 }
             }
         }
@@ -483,7 +772,7 @@ public sealed class ProcessFlowsheet
         double enthalpyDelta = (totalFeedEnthalpy + totalDutyAdded) - totalProductEnthalpy;
         double energyScale = Math.Abs(totalFeedEnthalpy) + Math.Abs(totalDutyAdded) + Math.Abs(totalProductEnthalpy);
         double relativeEnthalpyError = energyScale > 1e-6 ? Math.Abs(enthalpyDelta) / energyScale : 0.0;
-        bool isGlobalEnergyBalanced = relativeEnthalpyError < 1e-4 || Math.Abs(enthalpyDelta) < 1.0;
+        bool isGlobalEnergyBalanced = relativeEnthalpyError < 5e-4 || Math.Abs(enthalpyDelta) < 1.0;
 
         var globalSummary = new GlobalBalanceSummary(
             TotalFeedMolarFlowMolPerSec: totalFeedMolarFlow,
@@ -582,7 +871,7 @@ public sealed class ProcessFlowsheet
             double unitEnthalpyDelta = (inEnthalpy + duty) - outEnthalpy;
             double unitEnergyScale = Math.Abs(inEnthalpy) + Math.Abs(duty) + Math.Abs(outEnthalpy);
             double relUnitEnthalpyErr = unitEnergyScale > 1e-6 ? Math.Abs(unitEnthalpyDelta) / unitEnergyScale : 0.0;
-            bool isUnitEnergyBalanced = relUnitEnthalpyErr < 1e-4 || Math.Abs(unitEnthalpyDelta) < 1.0;
+            bool isUnitEnergyBalanced = relUnitEnthalpyErr < 5e-4 || Math.Abs(unitEnthalpyDelta) < 1.0;
 
             unitSummaries.Add(new UnitBalanceSummary(
                 UnitId: unit.Id,

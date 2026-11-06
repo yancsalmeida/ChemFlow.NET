@@ -244,6 +244,115 @@ app.MapPost("/api/simulations/benchmark", (
 .WithName("RunBenchmarkSimulation")
 .WithOpenApi();
 
+app.MapPost("/api/simulations/recycle", (
+    RecycleSimulationRequest request,
+    ICompoundRepository compoundRepo,
+    ISimulationHistoryRepository historyRepo,
+    IThermodynamicPackage thermo) =>
+{
+    ChemicalCompound benzene = compoundRepo.GetById("C6H6")
+        ?? throw new InvalidOperationException("Compound C6H6 not found.");
+    ChemicalCompound toluene = compoundRepo.GetById("C7H8")
+        ?? throw new InvalidOperationException("Compound C7H8 not found.");
+
+    IReadOnlyList<ChemicalCompound> compounds = [benzene, toluene];
+
+    double zB = Math.Clamp(request.BenzeneMoleFraction, 0.01, 0.99);
+    double[] freshZ = [zB, 1.0 - zB];
+
+    var freshFeed = new MaterialStream(
+        "S-201", "Fresh Feed", compounds,
+        request.FreshFeedFlowMolPerSec, request.FreshFeedTemperatureKelvin, 120.0, freshZ);
+
+    var recycleStream = new MaterialStream(
+        "S-204", "Recycle Stream", compounds,
+        molarFlowRateMolPerSec: request.FreshFeedFlowMolPerSec * 0.4,
+        temperatureKelvin: request.FlashDrumTemperatureKelvin,
+        pressureKpa: request.FlashDrumPressureKpa,
+        compositionZ: [0.20, 0.80]);
+
+    var mixedFeed = new MaterialStream("S-202", "Mixed Feed", compounds);
+    var vaporDistillate = new MaterialStream("S-203", "Overhead Vapor Product", compounds);
+    var liquidBottoms = new MaterialStream("S-BTM", "Separator Bottoms", compounds);
+    var liquidPurge = new MaterialStream("S-205", "Liquid Purge Product", compounds);
+
+    var mixer = new Mixer("M-201", "Feed & Recycle Mixer", [freshFeed, recycleStream], mixedFeed);
+    var flashDrum = new FlashDrum("V-201", "VLE Separator Drum", mixedFeed, vaporDistillate, liquidBottoms,
+        operatingTemperatureKelvin: request.FlashDrumTemperatureKelvin,
+        operatingPressureKpa: request.FlashDrumPressureKpa);
+
+    double recFrac = Math.Clamp(request.RecycleFraction, 0.05, 0.95);
+    var splitter = new Splitter("SP-201", "Recycle-Purge Splitter", liquidBottoms,
+        [recycleStream, liquidPurge], [recFrac, 1.0 - recFrac]);
+
+    var flowsheet = new ProcessFlowsheet("Benzene-Toluene Closed-Loop Recycle Plant", thermo);
+    flowsheet.AddUnit(mixer);
+    flowsheet.AddUnit(flashDrum);
+    flowsheet.AddUnit(splitter);
+    flowsheet.AddTearStream(recycleStream);
+
+    var method = string.Equals(request.Method, "DirectSubstitution", StringComparison.OrdinalIgnoreCase)
+        ? RecycleConvergenceMethod.DirectSubstitution
+        : RecycleConvergenceMethod.Wegstein;
+
+    var solverOptions = new RecycleSolverOptions(
+        Method: method,
+        MaxIterations: 60,
+        Tolerance: request.Tolerance
+    );
+
+    FlowsheetSolveResult solveResult = flowsheet.SolveWithRecycle(solverOptions);
+    FlowsheetBalanceReport balanceReport = flowsheet.GenerateBalanceReport();
+    long runId = historyRepo.SaveSimulationRun(flowsheet, solveResult.ExecutionOrder);
+
+    var unitDtos = solveResult.ExecutionOrder
+        .Select(u => new UnitResultDto(u.Id, u.Name, u.UnitType, Math.Round(u.EnergyDutyWatts / 1000.0, 3)))
+        .ToList();
+
+    var streamDtos = flowsheet.Streams
+        .Select(s =>
+        {
+            var fractions = new Dictionary<string, double>();
+            for (int i = 0; i < s.Compounds.Count; i++)
+                fractions[s.Compounds[i].Id] = Math.Round(s.CompositionZ[i], 4);
+
+            return new StreamStateDto(
+                s.Id,
+                s.Name,
+                s.Phase.ToString(),
+                Math.Round(s.MolarFlowRateMolPerSec, 4),
+                Math.Round(s.TemperatureKelvin, 2),
+                Math.Round(s.TemperatureKelvin - 273.15, 2),
+                Math.Round(s.PressureKpa, 2),
+                Math.Round(s.VaporFractionBeta, 4),
+                Math.Round(s.MolarEnthalpyJPerMol, 2),
+                Math.Round(s.TotalEnthalpyFlowWatts / 1000.0, 3),
+                fractions
+            );
+        })
+        .ToList();
+
+    return Results.Ok(new PlantSimulationResponse(
+        SavedSimulationRunId: runId,
+        FlowsheetName: flowsheet.Name,
+        ThermodynamicModel: thermo.Name,
+        TopologicalExecutionOrder: solveResult.ExecutionOrder.Select(u => u.Id).ToList(),
+        Units: unitDtos,
+        Streams: streamDtos,
+        IsMassConserved: balanceReport.IsMassConserved,
+        IsEnergyConserved: balanceReport.IsEnergyConserved,
+        MassBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeMassError, 8),
+        EnergyBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeEnthalpyError, 8),
+        TopologyUrl: $"/api/simulations/{runId}/topology",
+        BalanceReportUrl: $"/api/simulations/{runId}/report",
+        HasRecycle: solveResult.HasRecycle,
+        RecycleIterations: solveResult.Iterations,
+        TearStreams: solveResult.TearStreamIds
+    ));
+})
+.WithName("RunRecycleSimulation")
+.WithOpenApi();
+
 app.MapGet("/api/simulations", (ISimulationHistoryRepository historyRepo) =>
     Results.Ok(historyRepo.GetRecentRuns(20)))
 .WithName("GetRecentSimulations")

@@ -492,6 +492,7 @@
       </div>
 
       <button class="btn-primary" id="btnSimulate">Solve DAG Flowsheet &amp; Persist to SQL</button>
+      <button class="btn-secondary" id="btnSimulateRecycle" style="width: 100%; margin-top: 0.5rem; border-color: #a855f7; color: #d8b4fe; background: rgba(168, 85, 247, 0.1);">Solve Closed-Loop Recycle (Wegstein Secant)</button>
 
       <div class="panel-header" style="margin-top: 1.5rem;">
         <h2>Binary VLE T-x-y Diagram</h2>
@@ -783,6 +784,7 @@
       selLight: document.getElementById('selLight'),
       selHeavy: document.getElementById('selHeavy'),
       btnSimulate: document.getElementById('btnSimulate'),
+      btnSimulateRecycle: document.getElementById('btnSimulateRecycle'),
       streamTableBody: document.getElementById('streamTableBody'),
       kpiDuty: document.getElementById('kpiDuty'),
       kpiBeta: document.getElementById('kpiBeta'),
@@ -921,23 +923,80 @@
       }
     }
 
+    async function runRecycleSimulation() {
+      updateLabels();
+      const payload = {
+        freshFeedFlowMolPerSec: parseFloat(els.inpF1.value) || 50.0,
+        freshFeedTemperatureKelvin: parseFloat(els.inpT1.value) || 320.0,
+        benzeneMoleFraction: 0.60,
+        flashDrumTemperatureKelvin: 365.0,
+        flashDrumPressureKpa: parseFloat(els.inpPdrum.value) || 101.325,
+        recycleFraction: 0.65,
+        method: "Wegstein",
+        tolerance: 0.00001
+      };
+
+      try {
+        const res = await fetch('/api/simulations/recycle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        renderPlantData(data);
+        currentRunId = data.savedSimulationRunId;
+
+        const [topologyRes, reportRes] = await Promise.all([
+          fetch(data.topologyUrl || `/api/simulations/${currentRunId}/topology`),
+          fetch(data.balanceReportUrl || `/api/simulations/${currentRunId}/report`)
+        ]);
+
+        if (topologyRes.ok) {
+          const topology = await topologyRes.json();
+          renderTopologyData(topology, currentRunId);
+        }
+
+        if (reportRes.ok) {
+          const report = await reportRes.json();
+          renderBalanceReport(report, currentRunId);
+        }
+
+        const sFeed = data.streams.find(s => s.id === 'S-202' || s.id === 'S-104');
+        if (sFeed) {
+          await loadTxyDiagram(sFeed.moleFractions['C6H6'], sFeed.temperatureKelvin);
+        }
+      } catch (err) {
+        console.error('Recycle simulation execution failed:', err);
+      }
+    }
+
     function renderPlantData(data) {
       const heater = data.units.find(u => u.unitType === 'HeaterCooler');
-      const s4 = data.streams.find(s => s.id === 'S-104');
-      const s5 = data.streams.find(s => s.id === 'S-105');
-      const s6 = data.streams.find(s => s.id === 'S-106');
-      const drumBeta = s4.molarFlowRateMolPerSec > 0
+      const flash = data.units.find(u => u.unitType === 'FlashDrum');
+      const s4 = data.streams.find(s => s.id === 'S-104') || data.streams.find(s => s.id === 'S-202');
+      const s5 = data.streams.find(s => s.id === 'S-105') || data.streams.find(s => s.id === 'S-203');
+      const s6 = data.streams.find(s => s.id === 'S-106') || data.streams.find(s => s.id === 'S-205');
+      const dutyVal = heater ? heater.energyDutyKilowatts : (flash ? flash.energyDutyKilowatts : 0);
+      const drumBeta = (s4 && s4.molarFlowRateMolPerSec > 0 && s5)
         ? s5.molarFlowRateMolPerSec / s4.molarFlowRateMolPerSec
         : 0;
 
-      els.kpiDuty.textContent = `${heater.energyDutyKilowatts.toFixed(1)} kW`;
+      els.kpiDuty.textContent = `${dutyVal.toFixed(1)} kW`;
       els.kpiBeta.textContent = drumBeta.toFixed(4);
-      els.kpiVaporY.textContent = `${(s5.moleFractions['C6H6'] * 100).toFixed(1)}%`;
+      els.kpiVaporY.textContent = s5?.moleFractions?.['C6H6'] ? `${(s5.moleFractions['C6H6'] * 100).toFixed(1)}%` : '--';
       els.kpiRunId.textContent = `#${data.savedSimulationRunId}`;
 
-      els.svgHeaterDuty.textContent = `Q = ${heater.energyDutyKilowatts.toFixed(1)} kW`;
-      els.svgVapLabel.textContent = `S-105 Vapor (${s5.molarFlowRateMolPerSec.toFixed(1)} mol/s)`;
-      els.svgLiqLabel.textContent = `S-106 Liquid (${s6.molarFlowRateMolPerSec.toFixed(1)} mol/s)`;
+      if (els.svgHeaterDuty) els.svgHeaterDuty.textContent = `Q = ${dutyVal.toFixed(1)} kW`;
+      if (s5 && els.svgVapLabel) els.svgVapLabel.textContent = `${s5.id} Vapor (${s5.molarFlowRateMolPerSec.toFixed(1)} mol/s)`;
+      if (s6 && els.svgLiqLabel) els.svgLiqLabel.textContent = `${s6.id} Liquid (${s6.molarFlowRateMolPerSec.toFixed(1)} mol/s)`;
+
+      if (data.hasRecycle) {
+        els.dagOrderBadge.textContent = `Recycle (Wegstein Secant: ${data.recycleIterations} iters) | Order: ${data.topologicalExecutionOrder.join(' → ')}`;
+        els.dagOrderBadge.style.color = '#c084fc';
+      } else {
+        els.dagOrderBadge.textContent = `Order: ${data.topologicalExecutionOrder.join(' → ')}`;
+        els.dagOrderBadge.style.color = '#34d399';
+      }
 
       els.streamTableBody.innerHTML = data.streams.map(s => `
         <tr>
@@ -1146,6 +1205,7 @@
     els.selLight.addEventListener('change', () => loadTxyDiagram());
     els.selHeavy.addEventListener('change', () => loadTxyDiagram());
     els.btnSimulate.addEventListener('click', runPlantSimulation);
+    els.btnSimulateRecycle.addEventListener('click', runRecycleSimulation);
 
     updateLabels();
     renderPlantData({

@@ -4,7 +4,7 @@
 [![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4.svg?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Thermodynamics](https://img.shields.io/badge/EOS-Peng--Robinson%20(1976)-00599C.svg)](#thermodynamics--process-physics)
 [![Native C11 FFI](https://img.shields.io/badge/C11_FFI-ReactorCore.C-00599C?logo=c)](https://github.com/yancsalmeida/ReactorCore.C)
-[![Tests](https://img.shields.io/badge/Tests-42%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
+[![Tests](https://img.shields.io/badge/Tests-50%20Passed%20(100%25)-2ea44f.svg)](#automated-testing)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](docker-compose.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -99,11 +99,12 @@ using a safeguarded Newton-Raphson solver with automatic fallback to bisection r
 - **`Mixer`**: Adiabatic multi-stream mixing with rigorous component mass conservation and enthalpy balance root-finding for outlet temperature.
 - **`HeaterCooler`**: Sensible and phase-change thermal duty ($\dot{Q}$ in $\text{kW}$) calculation for target temperatures and pressures.
 - **`FlashDrum`**: Isothermal/isobaric vapor-liquid phase separator.
+- **`Splitter`**: Stream divider partitioning a single inlet into multiple outlets according to fractional splits ($\sum \alpha_k = 1.0$), preserving $(T, P, z_i)$.
 - **`ConversionReactor`**: Stoichiometric reactor with limiting-reactant validation, fractional conversion, and heat of reaction ($\Delta H_{\text{rxn}}^\circ$) energy balance.
 - **`ContinuousStirredTankReactor`**: Dynamic CSTR unit operation with non-linear Arrhenius kinetics and jacket heat exchange ($UA(T - T_c)$), integrated via 4th-Order Runge-Kutta (RK4) powered natively by [**`ReactorCore.C`**](https://github.com/yancsalmeida/ReactorCore.C) (`libreactorcore.so`) through C-ABI P/Invoke.
-- **`ProcessFlowsheet`**: Solves the execution sequence using **Kahn's Topological Sort Algorithm** ($O(V + E)$), identifying and rejecting recycle loops prior to execution.
-- **Flowsheet Topology & Graphviz DOT (`ToDot()`):** Automatically compiles the process graph into Graphviz DOT syntax and JSON node/edge schemas for visualization.
-- **Mass & Energy Balance Closure (`GenerateBalanceReport()`):** Verifies global conservation across plant boundary feeds and products ($\Delta m / m < 10^{-5}$, $\Delta H / H < 10^{-4}$), component species conservation, and individual unit operation energy balance closure.
+- **`ProcessFlowsheet`**: Solves the execution sequence using **Kahn's Topological Sort Algorithm** ($O(V + E)$). Supports closed-loop recycles via **Tear Stream Cutting** and **Wegstein Bounded Secant Convergence Acceleration** ($q \in [-5.0, 0.0]$) with automatic feedback cycle identification.
+- **Flowsheet Topology & Graphviz DOT (`ToDot()`):** Automatically compiles the process graph into Graphviz DOT syntax and JSON node/edge schemas for visualization, rendering tear/recycle loops with dashed purple edges.
+- **Mass & Energy Balance Closure (`GenerateBalanceReport()`):** Verifies global conservation across plant boundary feeds and products ($\Delta m / m < 10^{-5}$, $\Delta H / H < 5 \times 10^{-4}$), component species conservation, and individual unit operation energy balance closure.
 
 ---
 
@@ -117,6 +118,7 @@ using a safeguarded Newton-Raphson solver with automatic fallback to bisection r
 | `POST` | `/api/thermo/flash` | Solve isothermal $(T, P)$ flash with selected thermodynamic package |
 | `POST` | `/api/thermo/txy` | Generate binary $T\text{-}x\text{-}y$ phase equilibrium isobaric curves |
 | `POST` | `/api/simulations/benchmark` | Execute and persist flash separation flowsheet (`Mixer` $\rightarrow$ `Heater` $\rightarrow$ `FlashDrum`) |
+| `POST` | `/api/simulations/recycle` | Solve closed-loop recycle flowsheet (`Mixer` $\rightarrow$ `FlashDrum` $\rightarrow$ `Splitter` $\rightarrow$ `Mixer`) with Wegstein acceleration |
 | `GET` | `/api/simulations` | Retrieve historical simulation runs from SQLite |
 | `GET` | `/api/simulations/{id}` | Retrieve detailed stream results for a simulation run |
 | `GET` | `/api/simulations/{id}/topology` | Export flowsheet graph topology (JSON or Graphviz DOT via `?format=dot`) |
@@ -164,7 +166,7 @@ dotnet test ChemFlow.sln
 ```
 
 ```text
-Passed! - Failed: 0, Passed: 35, Skipped: 0, Total: 35, Duration: 652 ms
+Passed! - Failed: 0, Passed: 50, Skipped: 0, Total: 50, Duration: 698 ms
 ```
 
 ---

@@ -89,4 +89,38 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         HttpResponseMessage reportResp = await _client.GetAsync("/api/simulations/99999999/report");
         Assert.Equal(HttpStatusCode.NotFound, reportResp.StatusCode);
     }
+
+    [Fact]
+    public async Task RecycleSimulation_Endpoint_SolvesAndSavesRecycleTopology()
+    {
+        // 1. POST /api/simulations/recycle
+        var request = new RecycleSimulationRequest(
+            FreshFeedFlowMolPerSec: 60.0,
+            FreshFeedTemperatureKelvin: 325.0,
+            BenzeneMoleFraction: 0.55,
+            FlashDrumTemperatureKelvin: 366.0,
+            FlashDrumPressureKpa: 101.325,
+            RecycleFraction: 0.60,
+            Method: "Wegstein"
+        );
+
+        HttpResponseMessage response = await _client.PostAsJsonAsync("/api/simulations/recycle", request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        PlantSimulationResponse? result = await response.Content.ReadFromJsonAsync<PlantSimulationResponse>();
+        Assert.NotNull(result);
+        Assert.True(result.SavedSimulationRunId > 0);
+        Assert.True(result.HasRecycle);
+        Assert.True(result.RecycleIterations > 0);
+        Assert.True(result.IsMassConserved);
+        Assert.True(result.IsEnergyConserved);
+        Assert.Contains("S-204", result.TearStreams ?? []);
+
+        // 2. GET /api/simulations/{id}/topology?format=dot
+        HttpResponseMessage dotResp = await _client.GetAsync($"/api/simulations/{result.SavedSimulationRunId}/topology?format=dot");
+        Assert.Equal(HttpStatusCode.OK, dotResp.StatusCode);
+        string dotText = await dotResp.Content.ReadAsStringAsync();
+        Assert.Contains("color=\"#a855f7\"", dotText);
+        Assert.Contains("[Recycle/Tear]", dotText);
+    }
 }

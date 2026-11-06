@@ -67,6 +67,17 @@ public sealed record BenchmarkSimulationRequest(
     [property: DefaultValue(101.325)] double FlashDrumPressureKpa = 101.325
 );
 
+public sealed record RecycleSimulationRequest(
+    [property: DefaultValue(50.0)] double FreshFeedFlowMolPerSec = 50.0,
+    [property: DefaultValue(320.0)] double FreshFeedTemperatureKelvin = 320.0,
+    [property: DefaultValue(0.60)] double BenzeneMoleFraction = 0.60,
+    [property: DefaultValue(365.0)] double FlashDrumTemperatureKelvin = 365.0,
+    [property: DefaultValue(101.325)] double FlashDrumPressureKpa = 101.325,
+    [property: DefaultValue(0.65)] double RecycleFraction = 0.65,
+    [property: DefaultValue("Wegstein")] string Method = "Wegstein",
+    [property: DefaultValue(1e-5)] double Tolerance = 1e-5
+);
+
 public sealed record StreamStateDto(
     string Id,
     string Name,
@@ -100,5 +111,8 @@ public sealed record PlantSimulationResponse(
     double MassBalanceRelativeError = 0.0,
     double EnergyBalanceRelativeError = 0.0,
     string? TopologyUrl = null,
-    string? BalanceReportUrl = null
+    string? BalanceReportUrl = null,
+    bool HasRecycle = false,
+    int RecycleIterations = 1,
+    IReadOnlyList<string>? TearStreams = null
 );

@@ -114,16 +114,15 @@ public sealed class MaterialStream
     }
 
     /// <summary>
-    /// Updates the stream thermodynamic state (F, T, P, z) and flashes it using the provided thermodynamic package.
+    /// Updates the stream thermodynamic state (F, T, P, z) and flashes it if a thermodynamic package is provided.
     /// </summary>
     public void UpdateState(
         double molarFlowRateMolPerSec,
         double temperatureKelvin,
         double pressureKpa,
         IReadOnlyList<double> compositionZ,
-        IThermodynamicPackage thermo)
+        IThermodynamicPackage? thermo = null)
     {
-        ArgumentNullException.ThrowIfNull(thermo);
         if (molarFlowRateMolPerSec < 0.0)
             throw new ArgumentOutOfRangeException(nameof(molarFlowRateMolPerSec), "Molar flow rate cannot be negative.");
         if (compositionZ is null || compositionZ.Count != Compounds.Count)
@@ -134,7 +133,14 @@ public sealed class MaterialStream
         PressureKpa = pressureKpa;
         CompositionZ = compositionZ.ToArray();
 
-        EquilibriumState = thermo.CalculateIsothermalFlash(Compounds, CompositionZ, TemperatureKelvin, PressureKpa);
+        if (thermo is not null)
+        {
+            EquilibriumState = thermo.CalculateIsothermalFlash(Compounds, CompositionZ, TemperatureKelvin, PressureKpa);
+        }
+        else
+        {
+            EquilibriumState = null;
+        }
     }
 
     /// <summary>
