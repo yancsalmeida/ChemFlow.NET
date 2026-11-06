@@ -34,8 +34,8 @@ flowchart TD
 
     subgraph Domain["ChemFlow.Domain (Core Engine - Zero Dependencies)"]
         Thermo["Thermodynamics (PengRobinson EOS, Raoult, RachfordRice, Cardano)"]
-        Units["Unit Operations (Mixer, HeaterCooler, FlashDrum, ConversionReactor)"]
-        DAG["ProcessFlowsheet (Kahn's Topological Sort O(V + E))"]
+        Units["Unit Operations (Mixer, Heater, FlashDrum, CSTR, DistillationColumn)"]
+        DAG["ProcessFlowsheet (Kahn's Topological Sort & Wegstein Recycle)"]
         Topology["Topology & DOT Export (Graphviz DOT & JSON Connectivity)"]
         Balance["Mass & Energy Balance Closure (Global, Species, Unit-by-Unit)"]
         Entities["Entities (ChemicalCompound, MaterialStream, AntoineCoefficients)"]
@@ -47,7 +47,7 @@ flowchart TD
     end
 
     subgraph Tests["ChemFlow.Tests (xUnit)"]
-        UnitTests["35 Automated Domain, Thermo & Integration Tests"]
+        UnitTests["56 Automated Domain, Thermo, RadFrac & Integration Tests"]
     end
 
     Browser --> Endpoints

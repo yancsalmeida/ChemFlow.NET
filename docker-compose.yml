@@ -19,6 +19,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+    networks:
+      - default
 
 volumes:
   chemflow-data:
+
+networks:
+  default:
+    name: chemical_software_portfolio_net
