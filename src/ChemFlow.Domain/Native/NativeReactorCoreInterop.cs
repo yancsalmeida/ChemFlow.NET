@@ -36,6 +36,20 @@ public struct CstrStateFFI
 }
 
 /// <summary>
+/// Diagnostic statistics matching CstrAdaptiveStatsFFI in ReactorCore.C.
+/// Tracks accepted/rejected step counts and local truncation error norms.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct CstrAdaptiveStatsFFI
+{
+    public nuint StepsAccepted;
+    public nuint StepsRejected;
+    public double FinalH;
+    public double MinH;
+    public double MaxLocalError;
+}
+
+/// <summary>
 /// High-performance native C-ABI Foreign Function Interface (FFI) bridge
 /// connecting ChemFlow.NET (.NET 8) with the ReactorCore.C (C11) numerical engine.
 /// Includes automatic shared library resolution and managed analytical RK4 fallback.
@@ -260,6 +274,193 @@ public static class NativeReactorCoreInterop
         return 0;
     }
 
+    /// <summary>
+    /// Advances reactor state across interval dt using adaptive RKF45 with local error control.
+    /// Uses default tolerances (rtol = 1e-5, atol = 1e-7).
+    /// </summary>
+    public static int StepAdaptive(
+        in CstrParamsFFI parameters,
+        ref double ca,
+        ref double tempK,
+        double dt,
+        out CstrAdaptiveStatsFFI stats)
+    {
+        return StepAdaptive(in parameters, ref ca, ref tempK, dt, 1e-5, 1e-7, out stats);
+    }
+
+    /// <summary>
+    /// Advances reactor state across interval dt using adaptive RKF45 with local error control.
+    /// Dynamically contracts step size during rapid thermal transients and expands during steady state.
+    /// </summary>
+    public static int StepAdaptive(
+        in CstrParamsFFI parameters,
+        ref double ca,
+        ref double tempK,
+        double dt,
+        double rtol,
+        double atol,
+        out CstrAdaptiveStatsFFI stats)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                int rc = NativeMethods.reactor_cstr_step_adaptive(in parameters, ref ca, ref tempK, dt, rtol, atol, out stats);
+                if (rc == 0) return 0;
+            }
+            catch { }
+        }
+
+        return ManagedStepAdaptive(in parameters, ref ca, ref tempK, dt, rtol, atol, out stats);
+    }
+
+    /// <summary>
+    /// Advances reactor state using adaptive RKF45 and returns detailed reaction diagnostics.
+    /// Uses default tolerances (rtol = 1e-5, atol = 1e-7).
+    /// </summary>
+    public static int StepDetailedAdaptive(
+        in CstrParamsFFI parameters,
+        ref double ca,
+        ref double tempK,
+        double dt,
+        double runawayThresholdK,
+        out CstrStateFFI outState,
+        out CstrAdaptiveStatsFFI outStats)
+    {
+        return StepDetailedAdaptive(in parameters, ref ca, ref tempK, dt, runawayThresholdK, 1e-5, 1e-7, out outState, out outStats);
+    }
+
+    /// <summary>
+    /// Advances reactor state using adaptive RKF45 and returns detailed reaction diagnostics.
+    /// </summary>
+    public static int StepDetailedAdaptive(
+        in CstrParamsFFI parameters,
+        ref double ca,
+        ref double tempK,
+        double dt,
+        double runawayThresholdK,
+        double rtol,
+        double atol,
+        out CstrStateFFI outState,
+        out CstrAdaptiveStatsFFI outStats)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                int rc = NativeMethods.reactor_cstr_step_detailed_adaptive(
+                    in parameters, ref ca, ref tempK, dt, rtol, atol, runawayThresholdK, out outState, out outStats);
+                if (rc == 0) return 0;
+            }
+            catch { }
+        }
+
+        int managedRc = ManagedStepAdaptive(in parameters, ref ca, ref tempK, dt, rtol, atol, out outStats);
+        double conversion = parameters.CaFeedMolPerL > 0.0
+            ? Math.Max(0.0, Math.Min(100.0, (1.0 - (ca / parameters.CaFeedMolPerL)) * 100.0))
+            : 0.0;
+        double rate = ReactionRate(in parameters, ca, tempK);
+
+        outState = new CstrStateFFI
+        {
+            CaMolPerL = ca,
+            TempKelvin = tempK,
+            ConversionPct = conversion,
+            ReactionRateMolPerLMin = rate,
+            IsRunaway = tempK >= runawayThresholdK
+        };
+
+        return managedRc;
+    }
+
+    /// <summary>
+    /// Simulates a batch trajectory using adaptive RKF45 error control with default tolerances.
+    /// </summary>
+    public static int SimulateAdaptiveTrajectory(
+        in CstrParamsFFI parameters,
+        double initialCa,
+        double initialTempK,
+        double dt,
+        int steps,
+        double[] outTime,
+        double[] outCa,
+        double[] outTemp,
+        out CstrAdaptiveStatsFFI outStats)
+    {
+        return SimulateAdaptiveTrajectory(in parameters, initialCa, initialTempK, dt, steps, 1e-5, 1e-7, outTime, outCa, outTemp, out outStats);
+    }
+
+    /// <summary>
+    /// Simulates a batch trajectory using adaptive RKF45 error control.
+    /// </summary>
+    public static int SimulateAdaptiveTrajectory(
+        in CstrParamsFFI parameters,
+        double initialCa,
+        double initialTempK,
+        double dt,
+        int steps,
+        double rtol,
+        double atol,
+        double[] outTime,
+        double[] outCa,
+        double[] outTemp,
+        out CstrAdaptiveStatsFFI outStats)
+    {
+        if (outTime.Length < steps + 1 || outCa.Length < steps + 1 || outTemp.Length < steps + 1)
+            throw new ArgumentException("Output arrays must have length at least steps + 1.");
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_simulate_adaptive_trajectory(
+                    in parameters, initialCa, initialTempK, dt, (nuint)steps, rtol, atol, outTime, outCa, outTemp, out outStats);
+            }
+            catch { }
+        }
+
+        // Managed adaptive trajectory solver
+        outTime[0] = 0.0;
+        outCa[0] = initialCa;
+        outTemp[0] = initialTempK;
+
+        double curCa = initialCa;
+        double curTemp = initialTempK;
+        double t = 0.0;
+
+        nuint totalAcc = 0;
+        nuint totalRej = 0;
+        double minH = double.MaxValue;
+        double maxErr = 0.0;
+        double lastH = dt / 10.0;
+
+        for (int i = 1; i <= steps; i++)
+        {
+            ManagedStepAdaptive(in parameters, ref curCa, ref curTemp, dt, rtol, atol, out CstrAdaptiveStatsFFI stepStats);
+            t += dt;
+            outTime[i] = t;
+            outCa[i] = curCa;
+            outTemp[i] = curTemp;
+
+            totalAcc += stepStats.StepsAccepted;
+            totalRej += stepStats.StepsRejected;
+            if (stepStats.MinH < minH) minH = stepStats.MinH;
+            if (stepStats.MaxLocalError > maxErr) maxErr = stepStats.MaxLocalError;
+            lastH = stepStats.FinalH;
+        }
+
+        outStats = new CstrAdaptiveStatsFFI
+        {
+            StepsAccepted = totalAcc,
+            StepsRejected = totalRej,
+            FinalH = lastH,
+            MinH = minH == double.MaxValue ? dt : minH,
+            MaxLocalError = maxErr
+        };
+
+        return 0;
+    }
+
     private static int ManagedStepRk4(in CstrParamsFFI p, ref double ca, ref double tempK, double dt)
     {
         if (dt <= 0.0) return -1;
@@ -312,6 +513,144 @@ public static class NativeReactorCoreInterop
                - heatRemCoeff * (safeT - p.TCoolantKelvin);
     }
 
+    private static int ManagedStepAdaptive(
+        in CstrParamsFFI p,
+        ref double ca,
+        ref double tempK,
+        double dt,
+        double rtol,
+        double atol,
+        out CstrAdaptiveStatsFFI stats)
+    {
+        if (dt <= 0.0)
+        {
+            stats = default;
+            return -1;
+        }
+
+        if (rtol <= 0.0) rtol = 1e-5;
+        if (atol <= 0.0) atol = 1e-7;
+
+        double curCa = ca;
+        double curTemp = tempK;
+        double t = 0.0;
+        double h = dt / 10.0;
+        double hMin = 1e-9;
+        double hMax = dt;
+        const double safety = 0.90;
+
+        nuint accepted = 0;
+        nuint rejected = 0;
+        double minH = double.MaxValue;
+        double maxLocalErr = 0.0;
+        double finalH = h;
+
+        while (t < dt - 1e-12 * dt)
+        {
+            if (t + h > dt)
+                h = dt - t;
+
+            if (h < hMin) h = hMin;
+
+            // Evaluate RKF45 stages
+            // k1
+            EvaluateDerivatives(in p, curCa, curTemp, out double k1_ca, out double k1_t);
+
+            // k2: t + h/4, y + h/4 * k1
+            EvaluateDerivatives(in p, curCa + h * 0.25 * k1_ca, curTemp + h * 0.25 * k1_t, out double k2_ca, out double k2_t);
+
+            // k3: t + 3/8*h, y + h*(3/32*k1 + 9/32*k2)
+            EvaluateDerivatives(in p,
+                curCa + h * ((3.0 / 32.0) * k1_ca + (9.0 / 32.0) * k2_ca),
+                curTemp + h * ((3.0 / 32.0) * k1_t + (9.0 / 32.0) * k2_t),
+                out double k3_ca, out double k3_t);
+
+            // k4: t + 12/13*h
+            EvaluateDerivatives(in p,
+                curCa + h * ((1932.0 / 2197.0) * k1_ca - (7200.0 / 2197.0) * k2_ca + (7296.0 / 2197.0) * k3_ca),
+                curTemp + h * ((1932.0 / 2197.0) * k1_t - (7200.0 / 2197.0) * k2_t + (7296.0 / 2197.0) * k3_t),
+                out double k4_ca, out double k4_t);
+
+            // k5: t + h
+            EvaluateDerivatives(in p,
+                curCa + h * ((439.0 / 216.0) * k1_ca - 8.0 * k2_ca + (3680.0 / 513.0) * k3_ca - (845.0 / 4104.0) * k4_ca),
+                curTemp + h * ((439.0 / 216.0) * k1_t - 8.0 * k2_t + (3680.0 / 513.0) * k3_t - (845.0 / 4104.0) * k4_t),
+                out double k5_ca, out double k5_t);
+
+            // k6: t + h/2
+            EvaluateDerivatives(in p,
+                curCa + h * ((-8.0 / 27.0) * k1_ca + 2.0 * k2_ca - (3544.0 / 2565.0) * k3_ca + (1859.0 / 4104.0) * k4_ca - (11.0 / 40.0) * k5_ca),
+                curTemp + h * ((-8.0 / 27.0) * k1_t + 2.0 * k2_t - (3544.0 / 2565.0) * k3_t + (1859.0 / 4104.0) * k4_t - (11.0 / 40.0) * k5_t),
+                out double k6_ca, out double k6_t);
+
+            // 4th order candidate
+            double y4_ca = curCa + h * ((25.0 / 216.0) * k1_ca + (1408.0 / 2565.0) * k3_ca + (2197.0 / 4104.0) * k4_ca - 0.2 * k5_ca);
+            double y4_t = curTemp + h * ((25.0 / 216.0) * k1_t + (1408.0 / 2565.0) * k3_t + (2197.0 / 4104.0) * k4_t - 0.2 * k5_t);
+
+            // 5th order candidate
+            double y5_ca = curCa + h * ((16.0 / 135.0) * k1_ca + (6656.0 / 12825.0) * k3_ca + (28561.0 / 56430.0) * k4_ca - (9.0 / 50.0) * k5_ca + (2.0 / 55.0) * k6_ca);
+            double y5_t = curTemp + h * ((16.0 / 135.0) * k1_t + (6656.0 / 12825.0) * k3_t + (28561.0 / 56430.0) * k4_t - (9.0 / 50.0) * k5_t + (2.0 / 55.0) * k6_t);
+
+            // RMS error norm
+            double scaleCa = atol + rtol * Math.Max(Math.Abs(curCa), Math.Abs(y5_ca));
+            double scaleT = atol + rtol * Math.Max(Math.Abs(curTemp), Math.Abs(y5_t));
+            if (scaleCa <= 0.0) scaleCa = 1e-15;
+            if (scaleT <= 0.0) scaleT = 1e-15;
+
+            double ratioCa = (y5_ca - y4_ca) / scaleCa;
+            double ratioT = (y5_t - y4_t) / scaleT;
+            double errorNorm = Math.Sqrt(0.5 * (ratioCa * ratioCa + ratioT * ratioT));
+
+            if (h < minH) minH = h;
+            if (errorNorm > maxLocalErr) maxLocalErr = errorNorm;
+
+            if (errorNorm <= 1.0)
+            {
+                // Step accepted
+                t += h;
+                curCa = Math.Max(0.0, y5_ca);
+                curTemp = Math.Max(50.0, y5_t);
+                accepted++;
+                finalH = h;
+
+                double factor = errorNorm == 0.0 ? 5.0 : Math.Clamp(safety * Math.Pow(errorNorm, -0.20), 0.2, 5.0);
+                h = Math.Clamp(h * factor, hMin, hMax);
+            }
+            else
+            {
+                // Step rejected
+                rejected++;
+                if (h <= hMin)
+                {
+                    stats = new CstrAdaptiveStatsFFI
+                    {
+                        StepsAccepted = accepted,
+                        StepsRejected = rejected,
+                        FinalH = h,
+                        MinH = minH,
+                        MaxLocalError = maxLocalErr
+                    };
+                    return -1;
+                }
+
+                double factor = Math.Clamp(safety * Math.Pow(errorNorm, -0.20), 0.2, 0.90);
+                h = Math.Max(hMin, h * factor);
+            }
+        }
+
+        ca = curCa;
+        tempK = curTemp;
+        stats = new CstrAdaptiveStatsFFI
+        {
+            StepsAccepted = accepted,
+            StepsRejected = rejected,
+            FinalH = finalH,
+            MinH = minH == double.MaxValue ? dt : minH,
+            MaxLocalError = maxLocalErr
+        };
+        return 0;
+    }
+
     private static class NativeMethods
     {
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
@@ -346,6 +685,45 @@ public static class NativeReactorCoreInterop
             [Out] double[] out_time,
             [Out] double[] out_ca,
             [Out] double[] out_temp
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_step_adaptive(
+            in CstrParamsFFI parameters,
+            ref double ca,
+            ref double temp_k,
+            double dt,
+            double rtol,
+            double atol,
+            out CstrAdaptiveStatsFFI out_stats
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_step_detailed_adaptive(
+            in CstrParamsFFI parameters,
+            ref double ca,
+            ref double temp_k,
+            double dt,
+            double rtol,
+            double atol,
+            double runaway_threshold_k,
+            out CstrStateFFI out_state,
+            out CstrAdaptiveStatsFFI out_stats
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_simulate_adaptive_trajectory(
+            in CstrParamsFFI parameters,
+            double initial_ca,
+            double initial_temp_k,
+            double dt,
+            nuint steps,
+            double rtol,
+            double atol,
+            [Out] double[] out_time,
+            [Out] double[] out_ca,
+            [Out] double[] out_temp,
+            out CstrAdaptiveStatsFFI out_stats
         );
     }
 }

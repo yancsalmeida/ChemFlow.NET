@@ -33,6 +33,8 @@ public sealed class ContinuousStirredTankReactor : UnitOperationBase
     public double OutletConcentrationMolPerL { get; private set; }
     public double ReactionRateMolPerLMin { get; private set; }
     public bool IsThermalRunaway { get; private set; }
+    public bool UseAdaptiveSolver { get; init; } = true;
+    public CstrAdaptiveStatsFFI LastAdaptiveStats { get; private set; }
     public bool IsUsingNativeCore => NativeReactorCoreInterop.IsNativeAvailable;
     public string CoreVersion => NativeReactorCoreInterop.VersionString;
 
@@ -51,9 +53,11 @@ public sealed class ContinuousStirredTankReactor : UnitOperationBase
         double reactionEnthalpyJPerMol = 200000.0,
         double fluidDensityKgPerM3 = 1000.0,
         double fluidHeatCapacityJPerKgK = 4000.0,
-        double maxSafeTemperatureKelvin = 400.0)
+        double maxSafeTemperatureKelvin = 400.0,
+        bool useAdaptiveSolver = true)
         : base(id, name, [inletStream], [outletStream])
     {
+        UseAdaptiveSolver = useAdaptiveSolver;
         if (string.IsNullOrWhiteSpace(reactantCompoundId))
             throw new ArgumentException("Reactant compound ID cannot be empty.", nameof(reactantCompoundId));
         if (string.IsNullOrWhiteSpace(productCompoundId))
@@ -127,30 +131,53 @@ public sealed class ContinuousStirredTankReactor : UnitOperationBase
 
         // Advance CSTR dynamic state over residence time tau = V / q (min)
         double residenceTimeMin = parameters.VolumeLiters / parameters.VolumetricFlowLPerMin;
-        double dtMin = Math.Min(0.005, residenceTimeMin / 20.0);
-        int steps = Math.Max(20, (int)Math.Ceiling(residenceTimeMin / dtMin));
-        dtMin = residenceTimeMin / steps;
-
         double curCa = parameters.CaFeedMolPerL;
         double curTemp = parameters.TFeedKelvin;
 
-        for (int s = 0; s < steps; s++)
+        if (UseAdaptiveSolver)
         {
-            NativeReactorCoreInterop.StepDetailed(
+            NativeReactorCoreInterop.StepDetailedAdaptive(
                 in parameters,
                 ref curCa,
                 ref curTemp,
-                dtMin,
+                residenceTimeMin,
                 MaxSafeTemperatureKelvin,
-                out CstrStateFFI state
+                rtol: 1e-5,
+                atol: 1e-7,
+                out CstrStateFFI state,
+                out CstrAdaptiveStatsFFI stats
             );
 
-            if (s == steps - 1)
+            OutletConcentrationMolPerL = state.CaMolPerL;
+            ReactionRateMolPerLMin = state.ReactionRateMolPerLMin;
+            FractionalConversion = state.ConversionPct / 100.0;
+            IsThermalRunaway = state.IsRunaway;
+            LastAdaptiveStats = stats;
+        }
+        else
+        {
+            double dtMin = Math.Min(0.005, residenceTimeMin / 20.0);
+            int steps = Math.Max(20, (int)Math.Ceiling(residenceTimeMin / dtMin));
+            dtMin = residenceTimeMin / steps;
+
+            for (int s = 0; s < steps; s++)
             {
-                OutletConcentrationMolPerL = state.CaMolPerL;
-                ReactionRateMolPerLMin = state.ReactionRateMolPerLMin;
-                FractionalConversion = state.ConversionPct / 100.0;
-                IsThermalRunaway = state.IsRunaway;
+                NativeReactorCoreInterop.StepDetailed(
+                    in parameters,
+                    ref curCa,
+                    ref curTemp,
+                    dtMin,
+                    MaxSafeTemperatureKelvin,
+                    out CstrStateFFI state
+                );
+
+                if (s == steps - 1)
+                {
+                    OutletConcentrationMolPerL = state.CaMolPerL;
+                    ReactionRateMolPerLMin = state.ReactionRateMolPerLMin;
+                    FractionalConversion = state.ConversionPct / 100.0;
+                    IsThermalRunaway = state.IsRunaway;
+                }
             }
         }
 

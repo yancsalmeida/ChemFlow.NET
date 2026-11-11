@@ -195,4 +195,110 @@ public class NativeReactorCoreTests
         Assert.True(topology.IsAcyclic);
         Assert.Contains("R-101", topology.DotGraph);
     }
+
+    [Fact]
+    public void NativeInterop_StepAdaptive_AdvancesStateAndPopulatesStats()
+    {
+        CstrParamsFFI p = NativeReactorCoreInterop.GetDefaultParameters();
+        double ca = 1.0;
+        double tempK = 350.0;
+        double dt = 0.01;
+
+        int rc = NativeReactorCoreInterop.StepAdaptive(in p, ref ca, ref tempK, dt, out CstrAdaptiveStatsFFI stats);
+        Assert.Equal(0, rc);
+
+        Assert.True(ca < 1.0, "Reactant Ca must be depleted");
+        Assert.True(tempK > 350.0, "Exothermic reaction must elevate temperature");
+        Assert.True(stats.StepsAccepted > 0, "At least one step must be accepted");
+        Assert.True(stats.MinH > 0.0, "Min step size must be positive");
+    }
+
+    [Fact]
+    public void NativeInterop_StepDetailedAdaptive_ComputesCompleteStateAndDiagnostics()
+    {
+        CstrParamsFFI p = NativeReactorCoreInterop.GetDefaultParameters();
+        double ca = 1.0;
+        double tempK = 350.0;
+        double dt = 0.01;
+
+        int rc = NativeReactorCoreInterop.StepDetailedAdaptive(
+            in p, ref ca, ref tempK, dt, 400.0, out CstrStateFFI state, out CstrAdaptiveStatsFFI stats);
+
+        Assert.Equal(0, rc);
+        Assert.True(state.ConversionPct > 0.0, "Conversion % must be positive");
+        Assert.True(state.ReactionRateMolPerLMin > 0.0, "Reaction rate must be positive");
+        Assert.False(state.IsRunaway, "Controlled initial step must not trigger runaway");
+        Assert.True(stats.StepsAccepted > 0, "Adaptive steps must be accepted");
+    }
+
+    [Fact]
+    public void NativeInterop_SimulateAdaptiveTrajectory_GeneratesParityCurves()
+    {
+        CstrParamsFFI p = NativeReactorCoreInterop.GetDefaultParameters();
+        int steps = 50;
+        double dt = 0.01;
+
+        double[] times = new double[steps + 1];
+        double[] caCurve = new double[steps + 1];
+        double[] tempCurve = new double[steps + 1];
+
+        int rc = NativeReactorCoreInterop.SimulateAdaptiveTrajectory(
+            in p, 1.0, 350.0, dt, steps, times, caCurve, tempCurve, out CstrAdaptiveStatsFFI stats);
+
+        Assert.Equal(0, rc);
+        Assert.Equal(0.0, times[0]);
+        Assert.Equal(1.0, caCurve[0]);
+        Assert.Equal(350.0, tempCurve[0]);
+
+        // Monotonic trends
+        Assert.True(caCurve[steps] < caCurve[0], "Concentration must drop along trajectory");
+        Assert.True(tempCurve[steps] > tempCurve[0], "Temperature must rise due to heat of reaction");
+        Assert.True(stats.StepsAccepted >= (nuint)steps, "Total accepted adaptive steps >= sample intervals");
+    }
+
+    [Fact]
+    public void ContinuousStirredTankReactor_AdaptiveSolver_ConservesMassAndEnergy()
+    {
+        var sIn = new MaterialStream("S-1", "Feed", [_compoundA, _compoundB]);
+        sIn.UpdateState(50.0, 350.0, 150.0, [0.90, 0.10], _thermo);
+
+        var sOutAdaptive = new MaterialStream("S-2", "Effluent Adaptive", [_compoundA, _compoundB]);
+        var cstrAdaptive = new ContinuousStirredTankReactor(
+            id: "R-101-ADAPTIVE",
+            name: "Adaptive RKF45 CSTR",
+            inletStream: sIn,
+            outletStream: sOutAdaptive,
+            reactantCompoundId: "2-MP",
+            productCompoundId: "3-MP",
+            useAdaptiveSolver: true
+        );
+
+        cstrAdaptive.Solve(_thermo);
+
+        Assert.True(cstrAdaptive.FractionalConversion > 0.0);
+        Assert.True(cstrAdaptive.LastAdaptiveStats.StepsAccepted > 0);
+
+        // Mass and First Law conservation
+        Assert.Equal(sIn.MassFlowRateKgPerSec, sOutAdaptive.MassFlowRateKgPerSec, precision: 6);
+        double energyResidual = Math.Abs((sIn.TotalEnthalpyFlowWatts + cstrAdaptive.EnergyDutyWatts) - sOutAdaptive.TotalEnthalpyFlowWatts);
+        Assert.True(energyResidual < 1e-4, $"First Law violated in adaptive solver: residual = {energyResidual} W");
+
+        // Compare with fixed-step RK4 solver
+        var sOutFixed = new MaterialStream("S-3", "Effluent Fixed", [_compoundA, _compoundB]);
+        var cstrFixed = new ContinuousStirredTankReactor(
+            id: "R-101-FIXED",
+            name: "Fixed RK4 CSTR",
+            inletStream: sIn,
+            outletStream: sOutFixed,
+            reactantCompoundId: "2-MP",
+            productCompoundId: "3-MP",
+            useAdaptiveSolver: false
+        );
+
+        cstrFixed.Solve(_thermo);
+
+        // Conversion agreement between RK4 and RKF45
+        double diffConversion = Math.Abs(cstrAdaptive.FractionalConversion - cstrFixed.FractionalConversion);
+        Assert.True(diffConversion < 0.05, $"Conversions diverge: adaptive={cstrAdaptive.FractionalConversion}, fixed={cstrFixed.FractionalConversion}");
+    }
 }
