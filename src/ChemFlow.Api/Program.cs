@@ -101,9 +101,19 @@ app.MapPost("/api/thermo/flash", (
     RaoultThermodynamicPackage raoult,
     PengRobinsonThermodynamicPackage pengRobinson) =>
 {
-    IThermodynamicPackage thermo = request.Model?.ToLowerInvariant() is "raoult" or "ideal"
-        ? raoult
-        : pengRobinson;
+    IThermodynamicPackage thermo;
+    if (request.Model?.ToLowerInvariant() is "raoult" or "ideal")
+    {
+        thermo = raoult;
+    }
+    else if (request.InteractionPreset?.ToLowerInvariant() is "industrial" or "default")
+    {
+        thermo = new PengRobinsonThermodynamicPackage(BinaryInteractionMatrix.CreateDefaultIndustrialMatrix());
+    }
+    else
+    {
+        thermo = pengRobinson;
+    }
 
     IReadOnlyList<ChemicalCompound> compounds = compoundRepo.GetByIds(request.CompoundIds);
     FlashResult result = thermo.CalculateIsothermalFlash(

@@ -24,7 +24,8 @@ public sealed record FlashCalculationRequest(
     [property: DefaultValue(new[] { 0.5, 0.5 })] IReadOnlyList<double> CompositionZ,
     [property: DefaultValue(368.15)] double TemperatureKelvin = 368.15,
     [property: DefaultValue(101.325)] double PressureKpa = 101.325,
-    [property: DefaultValue("Peng-Robinson")] string? Model = "Peng-Robinson"
+    [property: DefaultValue("Peng-Robinson")] string? Model = "Peng-Robinson",
+    string? InteractionPreset = null
 );
 
 public sealed record FlashCalculationResponse(

@@ -20,12 +20,25 @@ public sealed class PengRobinsonThermodynamicPackage : IThermodynamicPackage
     private static readonly double Sigma2 = 1.0 - Math.Sqrt(2.0); // 1 - √2 ≈ -0.41421356
 
     private readonly double[,]? _binaryInteractionParameters;
+    private readonly BinaryInteractionMatrix _binaryInteractionMatrix;
+    private readonly MulticomponentIsothermalFlashSolver _flashSolver;
 
     public string Name => "Peng-Robinson EOS (1976)";
+    public BinaryInteractionMatrix InteractionMatrix => _binaryInteractionMatrix;
+    public MulticomponentIsothermalFlashSolver FlashSolver => _flashSolver;
 
-    public PengRobinsonThermodynamicPackage(double[,]? binaryInteractionParameters = null)
+    public PengRobinsonThermodynamicPackage(BinaryInteractionMatrix? binaryInteractionMatrix = null)
+    {
+        _binaryInteractionMatrix = binaryInteractionMatrix ?? BinaryInteractionMatrix.Empty;
+        _binaryInteractionParameters = null;
+        _flashSolver = new MulticomponentIsothermalFlashSolver(_binaryInteractionMatrix);
+    }
+
+    public PengRobinsonThermodynamicPackage(double[,]? binaryInteractionParameters)
     {
         _binaryInteractionParameters = binaryInteractionParameters;
+        _binaryInteractionMatrix = BinaryInteractionMatrix.Empty;
+        _flashSolver = new MulticomponentIsothermalFlashSolver(_binaryInteractionMatrix);
     }
 
     /// <summary>
@@ -45,8 +58,9 @@ public sealed class PengRobinsonThermodynamicPackage : IThermodynamicPackage
     }
 
     /// <summary>
-    /// Performs an isothermal (T, P) flash calculation for feed composition z,
+    /// Performs a rigorous multicomponent isothermal (T, P) flash calculation for feed composition z,
     /// returning phase state, vapor fraction β, phase compositions (x, y), and mixture molar enthalpy H.
+    /// Coupled with Wilson K-values initialization, Michelsen stability analysis, and Wegstein acceleration.
     /// </summary>
     public FlashResult CalculateIsothermalFlash(
         IReadOnlyList<ChemicalCompound> compounds,
@@ -54,141 +68,11 @@ public sealed class PengRobinsonThermodynamicPackage : IThermodynamicPackage
         double temperatureKelvin,
         double pressureKpa)
     {
-        ValidateInputs(compounds, overallCompositionZ, temperatureKelvin, pressureKpa);
+        var solver = _binaryInteractionParameters is not null
+            ? new MulticomponentIsothermalFlashSolver(new BinaryInteractionMatrix(compounds, _binaryInteractionParameters))
+            : _flashSolver;
 
-        int n = compounds.Count;
-        double[] z = overallCompositionZ.ToArray();
-
-        // 1. Initial K-value estimate via Wilson's empirical correlation (1969)
-        double[] kValues = CalculateWilsonKValues(compounds, temperatureKelvin, pressureKpa);
-
-        // 2. Initial phase boundary check with Wilson values
-        double f0 = RachfordRiceSolver.EvaluateObjectiveFunction(z, kValues, 0.0);
-        double f1 = RachfordRiceSolver.EvaluateObjectiveFunction(z, kValues, 1.0);
-
-        if (f0 <= 0.0)
-        {
-            // Check subcooled liquid stability with PR fugacities
-            double[] xPure = (double[])z.Clone();
-            double[] fugL = CalculatePureFugacityCoefficients(compounds, xPure, temperatureKelvin, pressureKpa, isVapor: false);
-            double enthalpyL = CalculatePhaseEnthalpy(compounds, xPure, temperatureKelvin, pressureKpa, isVapor: false);
-
-            return new FlashResult(
-                Phase: PhaseState.SubcooledLiquid,
-                TemperatureKelvin: temperatureKelvin,
-                PressureKpa: pressureKpa,
-                VaporFractionBeta: 0.0,
-                OverallCompositionZ: z,
-                LiquidCompositionX: xPure,
-                VaporCompositionY: Normalize(Multiply(xPure, kValues)),
-                KValues: kValues,
-                MolarEnthalpyJPerMol: enthalpyL,
-                Iterations: 0
-            );
-        }
-
-        if (f1 >= 0.0)
-        {
-            // Superheated vapor
-            double[] yPure = (double[])z.Clone();
-            double enthalpyV = CalculatePhaseEnthalpy(compounds, yPure, temperatureKelvin, pressureKpa, isVapor: true);
-
-            return new FlashResult(
-                Phase: PhaseState.SuperheatedVapor,
-                TemperatureKelvin: temperatureKelvin,
-                PressureKpa: pressureKpa,
-                VaporFractionBeta: 1.0,
-                OverallCompositionZ: z,
-                LiquidCompositionX: Normalize(Divide(yPure, kValues)),
-                VaporCompositionY: yPure,
-                KValues: kValues,
-                MolarEnthalpyJPerMol: enthalpyV,
-                Iterations: 0
-            );
-        }
-
-        // 3. Successive Substitution Iterations (Outer Loop: update K = φ_L / φ_V)
-        double beta = 0.5;
-        double[] x = new double[n];
-        double[] y = new double[n];
-        int iterations = 0;
-        const int maxOuterIterations = 150;
-        const double tolerance = 1e-8;
-
-        for (int iter = 1; iter <= maxOuterIterations; iter++)
-        {
-            iterations = iter;
-
-            // Solve Rachford-Rice inner loop for current K-values
-            RachfordRiceSolver.Solution rr = RachfordRiceSolver.Solve(z, kValues, tolerance: 1e-10);
-            beta = rr.Beta;
-            x = rr.LiquidCompositionX;
-            y = rr.VaporCompositionY;
-
-            if (rr.Phase != PhaseState.VaporLiquidEquilibrium)
-            {
-                // Transitioned to single phase
-                break;
-            }
-
-            // Calculate PR fugacity coefficients for liquid phase x and vapor phase y
-            double[] phiL = CalculateFugacityCoefficients(compounds, x, temperatureKelvin, pressureKpa, isVapor: false);
-            double[] phiV = CalculateFugacityCoefficients(compounds, y, temperatureKelvin, pressureKpa, isVapor: true);
-
-            double errorSum = 0.0;
-            double[] newK = new double[n];
-
-            for (int i = 0; i < n; i++)
-            {
-                newK[i] = phiL[i] / phiV[i];
-                double diff = (newK[i] / kValues[i]) - 1.0;
-                errorSum += diff * diff;
-            }
-
-            if (errorSum < tolerance)
-            {
-                kValues = newK;
-                break;
-            }
-
-            // Damped update to ensure robust convergence even near critical regions
-            double damping = iter > 20 ? 0.6 : 0.85;
-            for (int i = 0; i < n; i++)
-            {
-                kValues[i] = Math.Exp(damping * Math.Log(newK[i]) + (1.0 - damping) * Math.Log(kValues[i]));
-            }
-        }
-
-        // Final safety check: ensure x and y match final kValues
-        RachfordRiceSolver.Solution finalRr = RachfordRiceSolver.Solve(z, kValues, tolerance: 1e-12);
-        if (finalRr.Phase == PhaseState.VaporLiquidEquilibrium)
-        {
-            beta = finalRr.Beta;
-            x = finalRr.LiquidCompositionX;
-            y = finalRr.VaporCompositionY;
-        }
-
-        // 4. Calculate Phase Enthalpies with Peng-Robinson Departure Functions
-        double liquidEnthalpy = CalculatePhaseEnthalpy(compounds, x, temperatureKelvin, pressureKpa, isVapor: false);
-        double vaporEnthalpy = CalculatePhaseEnthalpy(compounds, y, temperatureKelvin, pressureKpa, isVapor: true);
-        double totalEnthalpy = (1.0 - beta) * liquidEnthalpy + beta * vaporEnthalpy;
-
-        PhaseState finalPhase = beta <= 1e-7 ? PhaseState.SubcooledLiquid
-                              : beta >= (1.0 - 1e-7) ? PhaseState.SuperheatedVapor
-                              : PhaseState.VaporLiquidEquilibrium;
-
-        return new FlashResult(
-            Phase: finalPhase,
-            TemperatureKelvin: temperatureKelvin,
-            PressureKpa: pressureKpa,
-            VaporFractionBeta: beta,
-            OverallCompositionZ: z,
-            LiquidCompositionX: x,
-            VaporCompositionY: y,
-            KValues: kValues,
-            MolarEnthalpyJPerMol: totalEnthalpy,
-            Iterations: iterations
-        );
+        return solver.Solve(compounds, overallCompositionZ, temperatureKelvin, pressureKpa);
     }
 
     /// <summary>
@@ -413,7 +297,9 @@ public sealed class PengRobinsonThermodynamicPackage : IThermodynamicPackage
 
             for (int j = 0; j < n; j++)
             {
-                double kij = _binaryInteractionParameters is not null ? _binaryInteractionParameters[i, j] : 0.0;
+                double kij = _binaryInteractionParameters is not null
+                    ? _binaryInteractionParameters[i, j]
+                    : _binaryInteractionMatrix.Get(compounds[i].Id, compounds[j].Id);
                 double aij = Math.Sqrt(a_pure[i] * a_pure[j]) * (1.0 - kij);
                 aMix += moleFractions[i] * moleFractions[j] * aij;
                 sumDelta += moleFractions[j] * aij;
@@ -507,7 +393,9 @@ public sealed class PengRobinsonThermodynamicPackage : IThermodynamicPackage
             bMix += moleFractions[i] * b_pure[i];
             for (int j = 0; j < n; j++)
             {
-                double kij = _binaryInteractionParameters is not null ? _binaryInteractionParameters[i, j] : 0.0;
+                double kij = _binaryInteractionParameters is not null
+                    ? _binaryInteractionParameters[i, j]
+                    : _binaryInteractionMatrix.Get(compounds[i].Id, compounds[j].Id);
                 double aij = Math.Sqrt(a_pure[i] * a_pure[j]) * (1.0 - kij);
                 double daijDt = 0.5 * (a_pure[i] * da_pure[j] + a_pure[j] * da_pure[i]) / Math.Sqrt(Math.Max(1e-12, a_pure[i] * a_pure[j])) * (1.0 - kij);
 

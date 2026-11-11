@@ -163,4 +163,42 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.Equal("Fractionation Column Simulation", topology.FlowsheetName);
         Assert.Contains(topology.Units, u => u.UnitType == "DistillationColumn");
     }
+
+    [Fact]
+    public async Task FlashCalculation_Endpoint_WithIndustrialInteractionPreset_ExecutesSuccessfullyAndShiftsBeta()
+    {
+        var reqIdeal = new FlashCalculationRequest(
+            CompoundIds: ["n-C6H14", "n-C7H16"],
+            CompositionZ: [0.5, 0.5],
+            TemperatureKelvin: 356.0,
+            PressureKpa: 101.325,
+            Model: "Peng-Robinson",
+            InteractionPreset: null
+        );
+
+        var reqNonIdeal = new FlashCalculationRequest(
+            CompoundIds: ["n-C6H14", "n-C7H16"],
+            CompositionZ: [0.5, 0.5],
+            TemperatureKelvin: 356.0,
+            PressureKpa: 101.325,
+            Model: "Peng-Robinson",
+            InteractionPreset: "industrial"
+        );
+
+        HttpResponseMessage respIdeal = await _client.PostAsJsonAsync("/api/thermo/flash", reqIdeal);
+        HttpResponseMessage respNonIdeal = await _client.PostAsJsonAsync("/api/thermo/flash", reqNonIdeal);
+
+        Assert.Equal(HttpStatusCode.OK, respIdeal.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, respNonIdeal.StatusCode);
+
+        FlashCalculationResponse? resIdeal = await respIdeal.Content.ReadFromJsonAsync<FlashCalculationResponse>();
+        FlashCalculationResponse? resNonIdeal = await respNonIdeal.Content.ReadFromJsonAsync<FlashCalculationResponse>();
+
+        Assert.NotNull(resIdeal);
+        Assert.NotNull(resNonIdeal);
+        Assert.Equal("VaporLiquidEquilibrium", resIdeal.Phase);
+        Assert.Equal("VaporLiquidEquilibrium", resNonIdeal.Phase);
+        Assert.True(resNonIdeal.VaporFractionBeta > resIdeal.VaporFractionBeta);
+        Assert.True(resNonIdeal.Iterations > 0);
+    }
 }
