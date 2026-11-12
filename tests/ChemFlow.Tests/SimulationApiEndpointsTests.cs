@@ -201,4 +201,65 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.True(resNonIdeal.VaporFractionBeta > resIdeal.VaporFractionBeta);
         Assert.True(resNonIdeal.Iterations > 0);
     }
+
+    [Fact]
+    public async Task CalculateTransportProperties_Endpoint_ReturnsValidViscosityAndPrandtl()
+    {
+        var req = new TransportPropertiesRequest(
+            CompoundIds: ["C6H6", "C7H8"],
+            CompositionZ: [0.5, 0.5],
+            TemperatureKelvin: 298.15,
+            PressureKpa: 101.325,
+            Package: "Chung"
+        );
+
+        HttpResponseMessage resp = await _client.PostAsJsonAsync("/api/transport/properties", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        TransportPropertiesResponse? res = await resp.Content.ReadFromJsonAsync<TransportPropertiesResponse>();
+        Assert.NotNull(res);
+        Assert.Equal("SubcooledLiquid", res.Phase);
+        Assert.InRange(res.DynamicViscosityCp, 0.2, 1.5);
+        Assert.InRange(res.ThermalConductivityWPerMK, 0.08, 0.25);
+        Assert.InRange(res.PrandtlNumber, 2.0, 20.0);
+        Assert.True(res.KinematicViscosityCSt > 0.0);
+    }
+
+    [Fact]
+    public async Task SimulateCstrBattery_Endpoint_ReturnsBatchSimulationWithTransportMetrics()
+    {
+        var req = new CstrBatterySimulationRequest(
+            ReactorCount: 6,
+            TotalFeedFlowMolPerSec: 60.0,
+            FeedTemperatureKelvin: 350.0,
+            FeedPressureKpa: 150.0,
+            ReactantCompoundId: "C6H6",
+            ProductCompoundId: "C7H8",
+            CompositionZ: [0.80, 0.20],
+            ReactorVolumeLiters: 100.0,
+            CoolantTemperatureKelvin: 300.0,
+            CoolingUaWattsPerKelvin: 666.67,
+            MaxSafeTemperatureKelvin: 400.0,
+            TransportPackage: "Chung"
+        );
+
+        HttpResponseMessage resp = await _client.PostAsJsonAsync("/api/telemetry/cstr/battery", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        CstrBatterySimulationResponse? res = await resp.Content.ReadFromJsonAsync<CstrBatterySimulationResponse>();
+        Assert.NotNull(res);
+        Assert.Equal(6, res.ReactorCount);
+        Assert.Equal(6, res.ReactorStates.Count);
+        Assert.True(res.MeanConversionPct > 0.0);
+        Assert.False(res.HasThermalRunaway);
+
+        foreach (var r in res.ReactorStates)
+        {
+            Assert.True(r.ConversionPct > 0.0);
+            Assert.InRange(r.DynamicViscosityCp, 0.1, 2.0);
+            Assert.InRange(r.ThermalConductivityWPerMK, 0.08, 0.30);
+            Assert.InRange(r.PrandtlNumber, 1.0, 25.0);
+        }
+    }
 }
+

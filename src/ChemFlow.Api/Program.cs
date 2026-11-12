@@ -6,6 +6,7 @@ using ChemFlow.Domain.Native;
 using ChemFlow.Domain.Repositories;
 using ChemFlow.Domain.Streams;
 using ChemFlow.Domain.Thermodynamics;
+using ChemFlow.Domain.Transport;
 using ChemFlow.Domain.Units;
 using ChemFlow.Infrastructure.Persistence;
 using ChemFlow.Infrastructure.Repositories;
@@ -603,6 +604,130 @@ app.MapPost("/api/telemetry/cstr/step", (CstrStreamRequest request) =>
     ));
 })
 .WithName("StepCstrSimulation")
+.WithOpenApi();
+
+app.MapPost("/api/transport/properties", (
+    TransportPropertiesRequest request,
+    ICompoundRepository compoundRepo,
+    PengRobinsonThermodynamicPackage prPkg) =>
+{
+    var compounds = request.CompoundIds.Select(id => compoundRepo.GetById(id)
+        ?? throw new InvalidOperationException($"Compound '{id}' not found.")).ToList();
+
+    ITransportPropertiesPackage pkg = string.Equals(request.Package, "Ely-Hanley", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(request.Package, "TRAPP", StringComparison.OrdinalIgnoreCase)
+        ? new ElyHanleyTransportPackage()
+        : new ChungTransportPackage();
+
+    var stream = new MaterialStream("TEMP-STREAM", "Stream for Transport Evaluation", compounds);
+    stream.UpdateState(
+        molarFlowRateMolPerSec: 10.0,
+        temperatureKelvin: request.TemperatureKelvin,
+        pressureKpa: request.PressureKpa,
+        compositionZ: request.CompositionZ,
+        thermo: prPkg
+    );
+
+    var res = stream.GetTransportProperties(pkg);
+
+    return Results.Ok(new TransportPropertiesResponse(
+        ModelName: res.ModelName,
+        Phase: res.Phase.ToString(),
+        TemperatureKelvin: Math.Round(res.TemperatureKelvin, 2),
+        TemperatureCelsius: Math.Round(res.TemperatureCelsius, 2),
+        PressureKpa: Math.Round(res.PressureKpa, 2),
+        DynamicViscosityPaS: res.DynamicViscosityPaS,
+        DynamicViscosityCp: Math.Round(res.DynamicViscosityCp, 4),
+        KinematicViscosityM2PerS: res.KinematicViscosityM2PerS,
+        KinematicViscosityCSt: Math.Round(res.KinematicViscosityCSt, 4),
+        ThermalConductivityWPerMK: Math.Round(res.ThermalConductivityWPerMK, 5),
+        DensityKgPerM3: Math.Round(res.DensityKgPerM3, 2),
+        PrandtlNumber: Math.Round(res.PrandtlNumber, 3)
+    ));
+})
+.WithName("CalculateTransportProperties")
+.WithOpenApi();
+
+app.MapPost("/api/telemetry/cstr/battery", (
+    CstrBatterySimulationRequest request,
+    ICompoundRepository compoundRepo,
+    PengRobinsonThermodynamicPackage prPkg) =>
+{
+    var reactant = compoundRepo.GetById(request.ReactantCompoundId)
+        ?? throw new InvalidOperationException($"Compound '{request.ReactantCompoundId}' not found.");
+    var product = compoundRepo.GetById(request.ProductCompoundId)
+        ?? throw new InvalidOperationException($"Compound '{request.ProductCompoundId}' not found.");
+
+    var compounds = new List<ChemicalCompound> { reactant, product };
+    var composition = request.CompositionZ ?? new[] { 0.80, 0.20 };
+
+    var sIn = new MaterialStream("FEED-BATTERY", "Feed to CSTR Battery", compounds);
+    sIn.UpdateState(
+        molarFlowRateMolPerSec: request.TotalFeedFlowMolPerSec,
+        temperatureKelvin: request.FeedTemperatureKelvin,
+        pressureKpa: request.FeedPressureKpa,
+        compositionZ: composition,
+        thermo: prPkg
+    );
+
+    var sOut = new MaterialStream("EFF-BATTERY", "Effluent from CSTR Battery", compounds);
+
+    ITransportPropertiesPackage transportPkg = string.Equals(request.TransportPackage, "Ely-Hanley", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(request.TransportPackage, "TRAPP", StringComparison.OrdinalIgnoreCase)
+        ? new ElyHanleyTransportPackage()
+        : new ChungTransportPackage();
+
+    var battery = new ContinuousStirredTankReactorBattery(
+        id: "CSTR-BATTERY-SIM",
+        name: $"Parallel CSTR Battery ({request.ReactorCount} Reactors)",
+        inletStream: sIn,
+        outletStream: sOut,
+        reactorCount: request.ReactorCount,
+        reactantCompoundId: request.ReactantCompoundId,
+        productCompoundId: request.ProductCompoundId,
+        reactorVolumeLiters: request.ReactorVolumeLiters,
+        coolantTemperatureKelvin: request.CoolantTemperatureKelvin,
+        nominalHeatTransferUaWattsPerKelvin: request.CoolingUaWattsPerKelvin,
+        maxSafeTemperatureKelvin: request.MaxSafeTemperatureKelvin,
+        transportPackage: transportPkg
+    );
+
+    battery.Solve(prPkg);
+
+    var reactorStatesDto = new List<CstrBatteryReactorStateDto>(request.ReactorCount);
+    for (int i = 0; i < request.ReactorCount; i++)
+    {
+        var s = battery.ReactorStates[i];
+        var tp = battery.ReactorTransportProperties[i];
+        reactorStatesDto.Add(new CstrBatteryReactorStateDto(
+            ReactorIndex: i,
+            ReactantConcentrationMolPerL: Math.Round(s.CaMolPerL, 4),
+            TemperatureKelvin: Math.Round(s.TempKelvin, 2),
+            TemperatureCelsius: Math.Round(s.TempKelvin - 273.15, 2),
+            ConversionPct: Math.Round(s.ConversionPct, 2),
+            ReactionRateMolPerLMin: Math.Round(s.ReactionRateMolPerLMin, 4),
+            IsRunaway: s.IsRunaway,
+            DynamicViscosityCp: Math.Round(tp.DynamicViscosityCp, 4),
+            ThermalConductivityWPerMK: Math.Round(tp.ThermalConductivityWPerMK, 5),
+            PrandtlNumber: Math.Round(tp.PrandtlNumber, 3)
+        ));
+    }
+
+    return Results.Ok(new CstrBatterySimulationResponse(
+        BatteryId: battery.Id,
+        Name: battery.Name,
+        ReactorCount: request.ReactorCount,
+        MeanConversionPct: Math.Round(battery.MeanConversion, 2),
+        MeanTemperatureKelvin: Math.Round(battery.MeanTemperatureKelvin, 2),
+        MeanTemperatureCelsius: Math.Round(battery.MeanTemperatureKelvin - 273.15, 2),
+        MeanOutletConcentrationMolPerL: Math.Round(battery.MeanOutletConcentrationMolPerL, 4),
+        HasThermalRunaway: battery.HasThermalRunaway,
+        IsUsingNativeSimd: battery.IsUsingNativeSimd,
+        EnergyDutyKilowatts: Math.Round(battery.EnergyDutyWatts / 1000.0, 2),
+        ReactorStates: reactorStatesDto
+    ));
+})
+.WithName("SimulateCstrBattery")
 .WithOpenApi();
 
 app.Run();

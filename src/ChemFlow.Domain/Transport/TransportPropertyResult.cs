@@ -20,6 +20,9 @@ public sealed record TransportPropertyResult
     /// <summary>Kinematic viscosity ν = μ / ρ in m²/s.</summary>
     public double KinematicViscosityM2PerS { get; init; }
 
+    /// <summary>Kinematic viscosity in centistokes (cSt) (1 cSt = 10^-6 m²/s = 1 mm²/s).</summary>
+    public double KinematicViscosityCSt => KinematicViscosityM2PerS * 1e6;
+
     /// <summary>Dimensionless Prandtl number Pr = (Cp * μ) / λ.</summary>
     public double PrandtlNumber { get; init; }
 
@@ -31,6 +34,9 @@ public sealed record TransportPropertyResult
 
     /// <summary>Evaluation temperature in Kelvin (K).</summary>
     public double TemperatureKelvin { get; init; }
+
+    /// <summary>Evaluation temperature in Celsius (°C).</summary>
+    public double TemperatureCelsius => TemperatureKelvin - 273.15;
 
     /// <summary>Evaluation pressure in kilopascals (kPa).</summary>
     public double PressureKpa { get; init; }

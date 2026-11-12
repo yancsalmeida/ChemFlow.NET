@@ -198,3 +198,68 @@ public sealed record CstrTelemetryFrameDto(
     string Status,
     string EngineMode
 );
+
+public sealed record TransportPropertiesRequest(
+    [property: DefaultValue(new[] { "C6H6", "C7H8" })] IReadOnlyList<string> CompoundIds,
+    [property: DefaultValue(new[] { 0.5, 0.5 })] IReadOnlyList<double> CompositionZ,
+    [property: DefaultValue(298.15)] double TemperatureKelvin = 298.15,
+    [property: DefaultValue(101.325)] double PressureKpa = 101.325,
+    [property: DefaultValue("Chung")] string? Package = "Chung"
+);
+
+public sealed record TransportPropertiesResponse(
+    string ModelName,
+    string Phase,
+    double TemperatureKelvin,
+    double TemperatureCelsius,
+    double PressureKpa,
+    double DynamicViscosityPaS,
+    double DynamicViscosityCp,
+    double KinematicViscosityM2PerS,
+    double KinematicViscosityCSt,
+    double ThermalConductivityWPerMK,
+    double DensityKgPerM3,
+    double PrandtlNumber
+);
+
+public sealed record CstrBatterySimulationRequest(
+    [property: DefaultValue(8)] int ReactorCount = 8,
+    [property: DefaultValue(100.0)] double TotalFeedFlowMolPerSec = 100.0,
+    [property: DefaultValue(350.0)] double FeedTemperatureKelvin = 350.0,
+    [property: DefaultValue(150.0)] double FeedPressureKpa = 150.0,
+    [property: DefaultValue("C6H6")] string ReactantCompoundId = "C6H6",
+    [property: DefaultValue("C7H8")] string ProductCompoundId = "C7H8",
+    [property: DefaultValue(new[] { 0.80, 0.20 })] IReadOnlyList<double>? CompositionZ = null,
+    [property: DefaultValue(100.0)] double ReactorVolumeLiters = 100.0,
+    [property: DefaultValue(300.0)] double CoolantTemperatureKelvin = 300.0,
+    [property: DefaultValue(666.67)] double CoolingUaWattsPerKelvin = 666.67,
+    [property: DefaultValue(400.0)] double MaxSafeTemperatureKelvin = 400.0,
+    [property: DefaultValue("Chung")] string? TransportPackage = "Chung"
+);
+
+public sealed record CstrBatteryReactorStateDto(
+    int ReactorIndex,
+    double ReactantConcentrationMolPerL,
+    double TemperatureKelvin,
+    double TemperatureCelsius,
+    double ConversionPct,
+    double ReactionRateMolPerLMin,
+    bool IsRunaway,
+    double DynamicViscosityCp,
+    double ThermalConductivityWPerMK,
+    double PrandtlNumber
+);
+
+public sealed record CstrBatterySimulationResponse(
+    string BatteryId,
+    string Name,
+    int ReactorCount,
+    double MeanConversionPct,
+    double MeanTemperatureKelvin,
+    double MeanTemperatureCelsius,
+    double MeanOutletConcentrationMolPerL,
+    bool HasThermalRunaway,
+    bool IsUsingNativeSimd,
+    double EnergyDutyKilowatts,
+    IReadOnlyList<CstrBatteryReactorStateDto> ReactorStates
+);
