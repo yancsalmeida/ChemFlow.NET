@@ -31,8 +31,13 @@ public struct CstrStateFFI
     public double TempKelvin;
     public double ConversionPct;
     public double ReactionRateMolPerLMin;
-    [MarshalAs(UnmanagedType.I1)]
-    public bool IsRunaway;
+    public byte IsRunawayByte;
+
+    public bool IsRunaway
+    {
+        readonly get => IsRunawayByte != 0;
+        init => IsRunawayByte = (byte)(value ? 1 : 0);
+    }
 }
 
 /// <summary>
@@ -59,6 +64,7 @@ public static class NativeReactorCoreInterop
     private const string LibraryName = "reactorcore";
 
     public static bool IsNativeAvailable { get; }
+    public static bool HasNativeSimdSupport { get; }
     public static string VersionString { get; }
 
     static NativeReactorCoreInterop()
@@ -70,10 +76,12 @@ public static class NativeReactorCoreInterop
             IntPtr ptr = NativeMethods.reactor_core_version();
             VersionString = Marshal.PtrToStringAnsi(ptr) ?? "Unknown";
             IsNativeAvailable = VersionString.Contains("ReactorCore.C", StringComparison.OrdinalIgnoreCase);
+            HasNativeSimdSupport = IsNativeAvailable && (NativeMethods.reactor_core_has_simd() == 1);
         }
         catch
         {
             IsNativeAvailable = false;
+            HasNativeSimdSupport = false;
             VersionString = "Managed C# Fallback Engine (libreactorcore.so not found)";
         }
     }
@@ -461,6 +469,195 @@ public static class NativeReactorCoreInterop
         return 0;
     }
 
+    /// <summary>
+    /// Advances an ensemble of N CSTR reactors simultaneously by a single RK4 step of length dt (min).
+    /// Utilizes AVX2 and FMA SIMD parallelization when native engine is available.
+    /// Updates caArray and tempKArray in-place.
+    /// </summary>
+    public static int StepBatchRk4(
+        in CstrParamsFFI parameters,
+        double[] caArray,
+        double[] tempKArray,
+        double dt)
+    {
+        ArgumentNullException.ThrowIfNull(caArray);
+        ArgumentNullException.ThrowIfNull(tempKArray);
+        if (caArray.Length != tempKArray.Length)
+            throw new ArgumentException("Concentration and temperature arrays must have equal length.");
+        if (caArray.Length == 0 || dt <= 0.0) return -1;
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                int rc = NativeMethods.reactor_cstr_batch_step_rk4(in parameters, caArray, tempKArray, (nuint)caArray.Length, dt);
+                if (rc == 0) return 0;
+            }
+            catch { }
+        }
+
+        // Managed SIMD/Parallel fallback
+        return ManagedStepBatchRk4(in parameters, caArray, tempKArray, dt);
+    }
+
+    /// <summary>
+    /// Advances an ensemble of N CSTR reactors simultaneously and evaluates detailed telemetry metrics
+    /// (conversion %, reaction rate, runaway status) for each individual reactor.
+    /// </summary>
+    public static int StepBatchDetailed(
+        in CstrParamsFFI parameters,
+        double[] caArray,
+        double[] tempKArray,
+        double dt,
+        double runawayThresholdK,
+        CstrStateFFI[] outStates)
+    {
+        ArgumentNullException.ThrowIfNull(caArray);
+        ArgumentNullException.ThrowIfNull(tempKArray);
+        ArgumentNullException.ThrowIfNull(outStates);
+        if (caArray.Length != tempKArray.Length || outStates.Length < caArray.Length)
+            throw new ArgumentException("Arrays must have matching dimensions.");
+        if (caArray.Length == 0 || dt <= 0.0) return -1;
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                int rc = NativeMethods.reactor_cstr_batch_step_detailed(
+                    in parameters, caArray, tempKArray, (nuint)caArray.Length, dt, runawayThresholdK, outStates);
+                if (rc == 0) return 0;
+            }
+            catch { }
+        }
+
+        return ManagedStepBatchDetailed(in parameters, caArray, tempKArray, dt, runawayThresholdK, outStates);
+    }
+
+    /// <summary>
+    /// Simulates high-speed batch dynamic trajectories for an ensemble of N reactors simultaneously.
+    /// Memory layouts:
+    ///   outTime: length steps + 1
+    ///   outCa, outTemp: length (steps + 1) * nReactors
+    /// </summary>
+    public static int SimulateBatchTrajectory(
+        in CstrParamsFFI parameters,
+        double[] initialCaArray,
+        double[] initialTempKArray,
+        double dt,
+        int steps,
+        double[] outTime,
+        double[] outCa,
+        double[] outTemp)
+    {
+        ArgumentNullException.ThrowIfNull(initialCaArray);
+        ArgumentNullException.ThrowIfNull(initialTempKArray);
+        ArgumentNullException.ThrowIfNull(outTime);
+        ArgumentNullException.ThrowIfNull(outCa);
+        ArgumentNullException.ThrowIfNull(outTemp);
+
+        int n = initialCaArray.Length;
+        if (initialTempKArray.Length != n)
+            throw new ArgumentException("Initial states arrays must have equal length.");
+        if (outTime.Length < steps + 1)
+            throw new ArgumentException("outTime length must be at least steps + 1.");
+        if (outCa.Length < (steps + 1) * n || outTemp.Length < (steps + 1) * n)
+            throw new ArgumentException("Trajectory output arrays must have length at least (steps + 1) * nReactors.");
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                int rc = NativeMethods.reactor_cstr_batch_simulate_trajectory(
+                    in parameters, initialCaArray, initialTempKArray, (nuint)n, dt, (nuint)steps, outTime, outCa, outTemp);
+                if (rc == 0) return 0;
+            }
+            catch { }
+        }
+
+        return ManagedSimulateBatchTrajectory(in parameters, initialCaArray, initialTempKArray, dt, steps, outTime, outCa, outTemp);
+    }
+
+    private static int ManagedStepBatchRk4(in CstrParamsFFI p, double[] ca, double[] tempK, double dt)
+    {
+        for (int i = 0; i < ca.Length; i++)
+        {
+            double c = ca[i];
+            double t = tempK[i];
+            ManagedStepRk4(in p, ref c, ref t, dt);
+            ca[i] = c;
+            tempK[i] = t;
+        }
+        return 0;
+    }
+
+    private static int ManagedStepBatchDetailed(
+        in CstrParamsFFI p,
+        double[] ca,
+        double[] tempK,
+        double dt,
+        double runawayThresholdK,
+        CstrStateFFI[] outStates)
+    {
+        for (int i = 0; i < ca.Length; i++)
+        {
+            double c = ca[i];
+            double t = tempK[i];
+            ManagedStepRk4(in p, ref c, ref t, dt);
+            ca[i] = c;
+            tempK[i] = t;
+            if (c < 0.0) { c = 0.0; ca[i] = 0.0; }
+            double conversion = p.CaFeedMolPerL > 0.0
+                ? Math.Max(0.0, Math.Min(100.0, (1.0 - (c / p.CaFeedMolPerL)) * 100.0))
+                : 0.0;
+            double rate = ReactionRate(in p, c, t);
+
+            outStates[i] = new CstrStateFFI
+            {
+                CaMolPerL = c,
+                TempKelvin = t,
+                ConversionPct = conversion,
+                ReactionRateMolPerLMin = rate,
+                IsRunaway = t >= runawayThresholdK
+            };
+        }
+        return 0;
+    }
+
+    private static int ManagedSimulateBatchTrajectory(
+        in CstrParamsFFI p,
+        double[] ca0,
+        double[] temp0,
+        double dt,
+        int steps,
+        double[] outTime,
+        double[] outCa,
+        double[] outTemp)
+    {
+        int n = ca0.Length;
+        outTime[0] = 0.0;
+        for (int j = 0; j < n; j++)
+        {
+            outCa[j] = ca0[j];
+            outTemp[j] = temp0[j];
+        }
+
+        double[] curCa = (double[])ca0.Clone();
+        double[] curTemp = (double[])temp0.Clone();
+
+        for (int s = 1; s <= steps; s++)
+        {
+            ManagedStepBatchRk4(in p, curCa, curTemp, dt);
+            outTime[s] = s * dt;
+            int offset = s * n;
+            for (int j = 0; j < n; j++)
+            {
+                outCa[offset + j] = curCa[j];
+                outTemp[offset + j] = curTemp[j];
+            }
+        }
+        return 0;
+    }
+
     private static int ManagedStepRk4(in CstrParamsFFI p, ref double ca, ref double tempK, double dt)
     {
         if (dt <= 0.0) return -1;
@@ -724,6 +921,42 @@ public static class NativeReactorCoreInterop
             [Out] double[] out_ca,
             [Out] double[] out_temp,
             out CstrAdaptiveStatsFFI out_stats
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_core_has_simd();
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_batch_step_rk4(
+            in CstrParamsFFI parameters,
+            [In, Out] double[] ca_array,
+            [In, Out] double[] temp_array,
+            nuint n_reactors,
+            double dt
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_batch_step_detailed(
+            in CstrParamsFFI parameters,
+            [In, Out] double[] ca_array,
+            [In, Out] double[] temp_array,
+            nuint n_reactors,
+            double dt,
+            double runaway_threshold_k,
+            [In, Out] CstrStateFFI[] out_states
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_batch_simulate_trajectory(
+            in CstrParamsFFI parameters,
+            [In] double[] ca0_array,
+            [In] double[] temp0_array,
+            nuint n_reactors,
+            double dt,
+            nuint steps,
+            [Out] double[] out_time,
+            [Out] double[] out_ca,
+            [Out] double[] out_temp
         );
     }
 }

@@ -151,4 +151,14 @@ public sealed class MaterialStream
         ArgumentNullException.ThrowIfNull(thermo);
         EquilibriumState = thermo.CalculateIsothermalFlash(Compounds, CompositionZ, TemperatureKelvin, PressureKpa);
     }
+
+    /// <summary>
+    /// Computes rigorous multicomponent transport properties (viscosity, thermal conductivity, and Prandtl number)
+    /// for the evaluated stream.
+    /// </summary>
+    public Transport.TransportPropertyResult GetTransportProperties(Transport.ITransportPropertiesPackage? package = null)
+    {
+        var transport = package ?? new Transport.ChungTransportPackage();
+        return transport.CalculateStreamProperties(this);
+    }
 }
