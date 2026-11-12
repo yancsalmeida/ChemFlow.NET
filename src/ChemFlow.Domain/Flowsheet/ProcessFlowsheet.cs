@@ -633,6 +633,7 @@ public sealed class ProcessFlowsheet
                 "ConversionReactor" => ("#FCE7F3", "#DB2777"),
                 "Splitter" => ("#E0E7FF", "#4F46E5"),
                 "DistillationColumn" => ("#EDE9FE", "#7C3AED"),
+                "ShortcutDistillationColumn" => ("#DDD6FE", "#6D28D9"),
                 _ => ("#F1F5F9", "#475569")
             };
 
@@ -643,6 +644,12 @@ public sealed class ProcessFlowsheet
                 double qcKw = col.CondenserDutyWatts / 1000.0;
                 double qrKw = col.ReboilerDutyWatts / 1000.0;
                 dutyStr = $" | N={col.NumberOfStages}, R={col.RefluxRatio:F1} | Qc={qcKw:F1} kW, Qr={qrKw:F1} kW";
+            }
+            else if (unit is ShortcutDistillationColumn shortcut)
+            {
+                double qcKw = shortcut.CondenserDutyWatts / 1000.0;
+                double qrKw = shortcut.ReboilerDutyWatts / 1000.0;
+                dutyStr = $" | FUG: N={shortcut.RecommendedNumberOfStages} (min {shortcut.MinimumStagesNmin:F1}), R={shortcut.OperatingRefluxRatio:F2} | Qc={qcKw:F1} kW, Qr={qrKw:F1} kW";
             }
             else
             {

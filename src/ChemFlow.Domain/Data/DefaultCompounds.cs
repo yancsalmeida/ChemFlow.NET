@@ -94,6 +94,90 @@ public static class DefaultCompounds
         antoine: new AntoineCoefficients(13.8622, 2910.26, -56.70)
     );
 
+    public static ChemicalCompound Propane { get; } = new(
+        id: "C3H8",
+        name: "Propane",
+        formula: "C3H8",
+        molarMass: 44.097,
+        criticalTemperatureKelvin: 369.8,
+        criticalPressureKpa: 4248.0,
+        acentricFactor: 0.152,
+        liquidHeatCapacityJPerMolK: 98.0,
+        vaporHeatCapacityJPerMolK: 73.5,
+        heatOfVaporizationJPerMol: 19040.0,
+        antoine: new AntoineCoefficients(13.7118, 1872.46, -25.16)
+    );
+
+    public static ChemicalCompound Isobutane { get; } = new(
+        id: "i-C4H10",
+        name: "Isobutane",
+        formula: "C4H10",
+        molarMass: 58.123,
+        criticalTemperatureKelvin: 407.8,
+        criticalPressureKpa: 3640.0,
+        acentricFactor: 0.181,
+        liquidHeatCapacityJPerMolK: 130.0,
+        vaporHeatCapacityJPerMolK: 96.0,
+        heatOfVaporizationJPerMol: 21290.0,
+        antoine: new AntoineCoefficients(13.5658, 2040.85, -33.15)
+    );
+
+    public static ChemicalCompound NButane { get; } = new(
+        id: "n-C4H10",
+        name: "n-Butane",
+        formula: "C4H10",
+        molarMass: 58.123,
+        criticalTemperatureKelvin: 425.1,
+        criticalPressureKpa: 3796.0,
+        acentricFactor: 0.200,
+        liquidHeatCapacityJPerMolK: 132.4,
+        vaporHeatCapacityJPerMolK: 97.4,
+        heatOfVaporizationJPerMol: 22440.0,
+        antoine: new AntoineCoefficients(13.6608, 2154.70, -34.42)
+    );
+
+    public static ChemicalCompound Isopentane { get; } = new(
+        id: "i-C5H12",
+        name: "Isopentane",
+        formula: "C5H12",
+        molarMass: 72.150,
+        criticalTemperatureKelvin: 460.4,
+        criticalPressureKpa: 3380.0,
+        acentricFactor: 0.229,
+        liquidHeatCapacityJPerMolK: 164.0,
+        vaporHeatCapacityJPerMolK: 118.0,
+        heatOfVaporizationJPerMol: 24600.0,
+        antoine: new AntoineCoefficients(13.6946, 2369.34, -40.15)
+    );
+
+    public static ChemicalCompound NPentane { get; } = new(
+        id: "n-C5H12",
+        name: "n-Pentane",
+        formula: "C5H12",
+        molarMass: 72.150,
+        criticalTemperatureKelvin: 469.7,
+        criticalPressureKpa: 3370.0,
+        acentricFactor: 0.252,
+        liquidHeatCapacityJPerMolK: 167.2,
+        vaporHeatCapacityJPerMolK: 120.2,
+        heatOfVaporizationJPerMol: 25790.0,
+        antoine: new AntoineCoefficients(13.7983, 2477.07, -39.94)
+    );
+
+    public static ChemicalCompound PXylene { get; } = new(
+        id: "p-C8H10",
+        name: "p-Xylene",
+        formula: "C8H10",
+        molarMass: 106.167,
+        criticalTemperatureKelvin: 616.2,
+        criticalPressureKpa: 3511.0,
+        acentricFactor: 0.322,
+        liquidHeatCapacityJPerMolK: 182.0,
+        vaporHeatCapacityJPerMolK: 126.8,
+        heatOfVaporizationJPerMol: 35670.0,
+        antoine: new AntoineCoefficients(14.0579, 3331.45, -57.97)
+    );
+
     public static IReadOnlyList<ChemicalCompound> All { get; } =
     [
         Water,
@@ -101,6 +185,12 @@ public static class DefaultCompounds
         Benzene,
         Toluene,
         NHexane,
-        NHeptane
+        NHeptane,
+        Propane,
+        Isobutane,
+        NButane,
+        Isopentane,
+        NPentane,
+        PXylene
     ];
 }

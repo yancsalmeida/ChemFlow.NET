@@ -261,5 +261,41 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
             Assert.InRange(r.PrandtlNumber, 1.0, 25.0);
         }
     }
+
+    [Fact]
+    public async Task ShortcutDistillationEndpoint_SolvesFugAndReturnsValidCalculations()
+    {
+        var req = new ShortcutDistillationRequest(
+            FeedFlowMolPerSec: 50.0,
+            FeedTemperatureKelvin: 340.0,
+            ColumnPressureKpa: 101.325,
+            CompoundIds: ["C6H6", "C7H8"],
+            FeedMoleFractions: [0.50, 0.50],
+            LightKeyIndex: 0,
+            HeavyKeyIndex: 1,
+            LightKeyRecoveryDistillate: 0.98,
+            HeavyKeyRecoveryBottoms: 0.98,
+            RefluxRatioMultiplier: 1.25,
+            Model: "Raoult",
+            Correlation: "Molokanov"
+        );
+
+        HttpResponseMessage resp = await _client.PostAsJsonAsync("/api/simulations/shortcut-distillation", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        ShortcutDistillationResponse? res = await resp.Content.ReadFromJsonAsync<ShortcutDistillationResponse>();
+        Assert.NotNull(res);
+        Assert.True(res.MinimumStagesNmin > 5.0);
+        Assert.True(res.MinimumRefluxRatioRmin > 0.5);
+        Assert.True(res.OperatingRefluxRatio > res.MinimumRefluxRatioRmin);
+        Assert.True(res.RecommendedNumberOfStages >= 10);
+        Assert.InRange(res.OptimalFeedStage, 2, res.RecommendedNumberOfStages - 1);
+        Assert.True(res.CondenserDutyKilowatts < 0.0);
+        Assert.True(res.ReboilerDutyKilowatts > 0.0);
+        Assert.True(res.EstimatedDiameterMeters > 0.1);
+        Assert.True(res.DistillateComposition["C6H6"] > 0.95);
+        Assert.True(res.BottomsComposition["C7H8"] > 0.95);
+    }
 }
+
 

@@ -1,7 +1,9 @@
 using ChemFlow.Api.Contracts;
 using ChemFlow.Api.Hubs;
+using ChemFlow.Domain.Data;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
+using ChemFlow.Domain.Mathematics;
 using ChemFlow.Domain.Native;
 using ChemFlow.Domain.Repositories;
 using ChemFlow.Domain.Streams;
@@ -497,6 +499,131 @@ app.MapPost("/api/simulations/distillation", (
     ));
 })
 .WithName("RunDistillationSimulation")
+.WithOpenApi();
+
+app.MapPost("/api/simulations/shortcut-distillation", (
+    ShortcutDistillationRequest request,
+    ICompoundRepository compoundRepo,
+    PengRobinsonThermodynamicPackage prPackage,
+    RaoultThermodynamicPackage raoultPackage) =>
+{
+    IThermodynamicPackage thermo = string.Equals(request.Model, "Peng-Robinson", StringComparison.OrdinalIgnoreCase)
+        ? prPackage
+        : raoultPackage;
+
+    List<ChemicalCompound> compounds = [];
+    if (request.CompoundIds is { Count: >= 2 } ids)
+    {
+        foreach (string id in ids)
+        {
+            ChemicalCompound? c = compoundRepo.GetById(id);
+            if (c != null) compounds.Add(c);
+        }
+    }
+
+    if (compounds.Count < 2)
+    {
+        compounds = [
+            compoundRepo.GetById("C6H6") ?? DefaultCompounds.Benzene,
+            compoundRepo.GetById("C7H8") ?? DefaultCompounds.Toluene
+        ];
+    }
+
+    int nComp = compounds.Count;
+    double[] zFeed = new double[nComp];
+    if (request.FeedMoleFractions is { Count: > 0 } fractions && fractions.Count == nComp)
+    {
+        double sum = fractions.Sum();
+        for (int i = 0; i < nComp; i++)
+            zFeed[i] = sum > 0.0 ? fractions[i] / sum : 1.0 / nComp;
+    }
+    else
+    {
+        Array.Fill(zFeed, 1.0 / nComp);
+    }
+
+    int lkIdx = Math.Clamp(request.LightKeyIndex, 0, nComp - 1);
+    int hkIdx = Math.Clamp(request.HeavyKeyIndex, 0, nComp - 1);
+    if (lkIdx == hkIdx)
+    {
+        if (hkIdx < nComp - 1) hkIdx++;
+        else lkIdx = 0;
+    }
+
+    var feedStream = new MaterialStream(
+        "S-FEED",
+        "Shortcut Feed",
+        compounds,
+        request.FeedFlowMolPerSec,
+        request.FeedTemperatureKelvin,
+        request.ColumnPressureKpa,
+        zFeed
+    );
+    feedStream.SolveEquilibrium(thermo);
+
+    var distillate = new MaterialStream("S-DIST", "Shortcut Distillate", compounds);
+    var bottoms = new MaterialStream("S-BTM", "Shortcut Bottoms", compounds);
+
+    var correlation = string.Equals(request.Correlation, "Eduljee", StringComparison.OrdinalIgnoreCase)
+        ? GillilandCorrelationType.Eduljee
+        : GillilandCorrelationType.Molokanov;
+
+    var shortcut = new ShortcutDistillationColumn(
+        id: "C-FUG",
+        name: "Shortcut Distillation Column (FUG)",
+        feedStream: feedStream,
+        distillateOutlet: distillate,
+        bottomsOutlet: bottoms,
+        lightKeyIndex: lkIdx,
+        heavyKeyIndex: hkIdx,
+        lightKeyRecoveryDistillate: request.LightKeyRecoveryDistillate,
+        heavyKeyRecoveryBottoms: request.HeavyKeyRecoveryBottoms,
+        refluxRatioMultiplier: request.RefluxRatioMultiplier,
+        columnPressureKpa: request.ColumnPressureKpa,
+        correlation: correlation
+    );
+
+    shortcut.Solve(thermo);
+    FugDesignResult res = shortcut.DesignResult!;
+
+    var distDict = new Dictionary<string, double>();
+    var btmDict = new Dictionary<string, double>();
+    var alphaDict = new Dictionary<string, double>();
+
+    for (int i = 0; i < nComp; i++)
+    {
+        string cId = compounds[i].Id;
+        distDict[cId] = Math.Round(res.DistillateCompositionX[i], 4);
+        btmDict[cId] = Math.Round(res.BottomsCompositionX[i], 4);
+        alphaDict[cId] = Math.Round(res.RelativeVolatilities[i], 4);
+    }
+
+    return Results.Ok(new ShortcutDistillationResponse(
+        ColumnId: shortcut.Id,
+        ColumnName: shortcut.Name,
+        ThermodynamicModel: thermo.Name,
+        MinimumStagesNmin: Math.Round(res.MinimumStagesNmin, 2),
+        MinimumRefluxRatioRmin: Math.Round(res.MinimumRefluxRatioRmin, 3),
+        OperatingRefluxRatio: Math.Round(res.OperatingRefluxRatio, 3),
+        TheoreticalStagesN: Math.Round(res.TheoreticalStagesN, 2),
+        RecommendedNumberOfStages: res.RecommendedNumberOfStages,
+        OptimalFeedStage: res.OptimalFeedStage,
+        RectifyingStagesNr: Math.Round(res.RectifyingStagesNr, 2),
+        StrippingStagesNs: Math.Round(res.StrippingStagesNs, 2),
+        UnderwoodTheta: Math.Round(res.UnderwoodTheta, 4),
+        DistillateFlowMolPerSec: Math.Round(res.DistillateRateMolPerSec, 4),
+        BottomsFlowMolPerSec: Math.Round(res.BottomsRateMolPerSec, 4),
+        TopTemperatureCelsius: Math.Round(res.TopTemperatureKelvin - 273.15, 2),
+        BottomTemperatureCelsius: Math.Round(res.BottomTemperatureKelvin - 273.15, 2),
+        CondenserDutyKilowatts: Math.Round(res.CondenserDutyWatts / 1000.0, 3),
+        ReboilerDutyKilowatts: Math.Round(res.ReboilerDutyWatts / 1000.0, 3),
+        EstimatedDiameterMeters: Math.Round(res.EstimatedDiameterMeters, 2),
+        DistillateComposition: distDict,
+        BottomsComposition: btmDict,
+        RelativeVolatilities: alphaDict
+    ));
+})
+.WithName("RunShortcutDistillation")
 .WithOpenApi();
 
 app.MapGet("/api/simulations", (ISimulationHistoryRepository historyRepo) =>

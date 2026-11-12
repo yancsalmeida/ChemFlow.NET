@@ -174,6 +174,46 @@ public sealed record DistillationIterationUpdateDto(
     IReadOnlyList<double> StageTemperaturesCelsius
 );
 
+public sealed record ShortcutDistillationRequest(
+    [property: DefaultValue(50.0)] double FeedFlowMolPerSec = 50.0,
+    [property: DefaultValue(340.0)] double FeedTemperatureKelvin = 340.0,
+    [property: DefaultValue(101.325)] double ColumnPressureKpa = 101.325,
+    IReadOnlyList<string>? CompoundIds = null,
+    IReadOnlyList<double>? FeedMoleFractions = null,
+    [property: DefaultValue(0)] int LightKeyIndex = 0,
+    [property: DefaultValue(1)] int HeavyKeyIndex = 1,
+    [property: DefaultValue(0.98)] double LightKeyRecoveryDistillate = 0.98,
+    [property: DefaultValue(0.98)] double HeavyKeyRecoveryBottoms = 0.98,
+    [property: DefaultValue(1.25)] double RefluxRatioMultiplier = 1.25,
+    [property: DefaultValue("Raoult")] string? Model = "Raoult",
+    [property: DefaultValue("Molokanov")] string? Correlation = "Molokanov"
+);
+
+public sealed record ShortcutDistillationResponse(
+    string ColumnId,
+    string ColumnName,
+    string ThermodynamicModel,
+    double MinimumStagesNmin,
+    double MinimumRefluxRatioRmin,
+    double OperatingRefluxRatio,
+    double TheoreticalStagesN,
+    int RecommendedNumberOfStages,
+    int OptimalFeedStage,
+    double RectifyingStagesNr,
+    double StrippingStagesNs,
+    double UnderwoodTheta,
+    double DistillateFlowMolPerSec,
+    double BottomsFlowMolPerSec,
+    double TopTemperatureCelsius,
+    double BottomTemperatureCelsius,
+    double CondenserDutyKilowatts,
+    double ReboilerDutyKilowatts,
+    double EstimatedDiameterMeters,
+    IReadOnlyDictionary<string, double> DistillateComposition,
+    IReadOnlyDictionary<string, double> BottomsComposition,
+    IReadOnlyDictionary<string, double> RelativeVolatilities
+);
+
 public sealed record CstrStreamRequest(
     [property: DefaultValue(100.0)] double VolumetricFlowLPerMin = 100.0,
     [property: DefaultValue(300.0)] double CoolantTemperatureKelvin = 300.0,

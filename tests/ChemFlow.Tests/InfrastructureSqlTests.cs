@@ -1,3 +1,4 @@
+using ChemFlow.Domain.Data;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
 using ChemFlow.Domain.Repositories;
@@ -35,7 +36,7 @@ public sealed class InfrastructureSqlTests : IDisposable
         ChemicalCompound? benzene = _compoundRepo.GetById("c6h6");
 
         // Assert
-        Assert.Equal(6, all.Count);
+        Assert.Equal(DefaultCompounds.All.Count, all.Count);
         Assert.NotNull(benzene);
         Assert.Equal("Benzene", benzene.Name);
         Assert.Equal(78.114, benzene.MolarMass, precision: 3);
@@ -66,7 +67,7 @@ public sealed class InfrastructureSqlTests : IDisposable
         // Assert
         Assert.NotNull(fetched);
         Assert.Equal("Acetone", fetched.Name);
-        Assert.Equal(7, _compoundRepo.GetAll().Count);
+        Assert.Equal(DefaultCompounds.All.Count + 1, _compoundRepo.GetAll().Count);
     }
 
     [Fact]

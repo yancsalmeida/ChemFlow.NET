@@ -61,10 +61,12 @@ public sealed class DistillationColumn : UnitOperationBase
     public double RefluxRatio { get; }
     public double? DistillateRateMolPerSec { get; }
     public double? ColumnPressureKpa { get; }
+    public double? ReboilerPressureKpa { get; }
     public DistillationColumnOptions Options { get; }
 
     public double CondenserDutyWatts { get; private set; }
     public double ReboilerDutyWatts { get; private set; }
+    public double EstimatedDiameterMeters { get; private set; }
     public IReadOnlyList<DistillationStageProfile> StageProfiles { get; private set; } = [];
     public int Iterations { get; private set; }
     public bool IsConverged { get; private set; }
@@ -80,6 +82,7 @@ public sealed class DistillationColumn : UnitOperationBase
         double refluxRatio = 2.0,
         double? distillateRateMolPerSec = null,
         double? columnPressureKpa = null,
+        double? reboilerPressureKpa = null,
         DistillationColumnOptions? options = null)
         : base(id, name, [feedStream], [distillateOutlet, bottomsOutlet])
     {
@@ -95,7 +98,22 @@ public sealed class DistillationColumn : UnitOperationBase
         RefluxRatio = refluxRatio;
         DistillateRateMolPerSec = distillateRateMolPerSec;
         ColumnPressureKpa = columnPressureKpa;
+        ReboilerPressureKpa = reboilerPressureKpa;
         Options = options ?? DistillationColumnOptions.Default;
+    }
+
+    /// <summary>
+    /// Instantiates a rigorous MESH distillation column directly from a solved shortcut design.
+    /// </summary>
+    public static DistillationColumn FromShortcut(
+        ShortcutDistillationColumn shortcut,
+        string? id = null,
+        string? name = null,
+        MaterialStream? distillateOutlet = null,
+        MaterialStream? bottomsOutlet = null,
+        DistillationColumnOptions? options = null)
+    {
+        return shortcut.ToRigorousColumn(id, name, distillateOutlet, bottomsOutlet, options);
     }
 
     protected override void SolveInternal(IThermodynamicPackage thermo)
@@ -105,7 +123,8 @@ public sealed class DistillationColumn : UnitOperationBase
         int nStages = NumberOfStages;
         int feedIdx = FeedStage - 1; // 0-indexed feed stage
 
-        double pCol = ColumnPressureKpa ?? FeedStream.PressureKpa;
+        double pTop = ColumnPressureKpa ?? FeedStream.PressureKpa;
+        double pBtm = ReboilerPressureKpa ?? pTop;
         double fTotal = FeedStream.MolarFlowRateMolPerSec;
         IReadOnlyList<double> zFeed = FeedStream.CompositionZ;
 
@@ -116,7 +135,10 @@ public sealed class DistillationColumn : UnitOperationBase
         double rRatio = RefluxRatio;
 
         double[] stageP = new double[nStages];
-        Array.Fill(stageP, pCol);
+        for (int j = 0; j < nStages; j++)
+        {
+            stageP[j] = pTop + ((double)j / (nStages - 1)) * (pBtm - pTop);
+        }
 
         // Estimate initial top and bottom bubble-point temperatures
         double[] xTopGuess = new double[nComp];
@@ -127,8 +149,8 @@ public sealed class DistillationColumn : UnitOperationBase
         xBtmGuess[nComp - 1] = 0.95;
         for (int i = 0; i < nComp - 1; i++) xBtmGuess[i] = 0.05 / (nComp - 1);
 
-        double tTop = thermo.CalculateBubblePointTemperatureKelvin(compounds, xTopGuess, pCol);
-        double tBtm = thermo.CalculateBubblePointTemperatureKelvin(compounds, xBtmGuess, pCol);
+        double tTop = thermo.CalculateBubblePointTemperatureKelvin(compounds, xTopGuess, stageP[0]);
+        double tBtm = thermo.CalculateBubblePointTemperatureKelvin(compounds, xBtmGuess, stageP[nStages - 1]);
         if (tTop >= tBtm)
         {
             tTop = tBtm - 15.0;
@@ -395,6 +417,21 @@ public sealed class DistillationColumn : UnitOperationBase
         }
 
         StageProfiles = profiles;
+
+        // 9. Estimate Column Diameter via Souders-Brown / Fair flooding correlation at top stage
+        double avgMolarMassTop = 0.0;
+        for (int i = 0; i < nComp; i++) avgMolarMassTop += xDistillate[i] * compounds[i].MolarMass;
+        double pPaTop = stageP[0] * 1000.0;
+        double rhoVaporTop = (pPaTop * (avgMolarMassTop * 1e-3)) / (8.314462618 * Math.Max(1.0, tStages[0]));
+        double rhoLiquidTop = 750.0; // kg/m^3
+        double cSb = 0.075; // m/s for 24-in tray spacing
+        double vFlood = cSb * Math.Sqrt(Math.Max(1.0, (rhoLiquidTop - rhoVaporTop) / Math.Max(0.1, rhoVaporTop)));
+        double vOp = 0.75 * vFlood;
+        double vaporMassFlow = (v1Flow * (avgMolarMassTop * 1e-3));
+        double volFlow = vaporMassFlow / Math.Max(0.1, rhoVaporTop);
+        double activeArea = volFlow / Math.Max(0.1, vOp);
+        double totalArea = activeArea / 0.85;
+        EstimatedDiameterMeters = Math.Sqrt(Math.Max(0.01, (4.0 * totalArea) / Math.PI));
     }
 
     /// <summary>

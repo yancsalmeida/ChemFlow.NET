@@ -520,6 +520,7 @@
 
       <button class="btn-primary" id="btnSimulate">Solve DAG Flowsheet &amp; Persist to SQL</button>
       <button class="btn-secondary" id="btnSimulateRecycle" style="width: 100%; margin-top: 0.5rem; border-color: #a855f7; color: #d8b4fe; background: rgba(168, 85, 247, 0.1);">Solve Closed-Loop Recycle (Wegstein Secant)</button>
+      <button class="btn-secondary" id="btnSimulateShortcut" style="width: 100%; margin-top: 0.5rem; border-color: #3b82f6; color: #93c5fd; background: rgba(59, 130, 246, 0.12);">Design Shortcut Distillation (FUG Shortcut)</button>
       <button class="btn-secondary" id="btnSimulateDistillation" style="width: 100%; margin-top: 0.5rem; border-color: #7c3aed; color: #c4b5fd; background: rgba(124, 58, 237, 0.12);">Solve Rigorous Distillation (Wang-Henke MESH)</button>
 
       <div class="panel-header" style="margin-top: 1.5rem;">
@@ -953,6 +954,7 @@
       selHeavy: document.getElementById('selHeavy'),
       btnSimulate: document.getElementById('btnSimulate'),
       btnSimulateRecycle: document.getElementById('btnSimulateRecycle'),
+      btnSimulateShortcut: document.getElementById('btnSimulateShortcut'),
       btnSimulateDistillation: document.getElementById('btnSimulateDistillation'),
       streamTableBody: document.getElementById('streamTableBody'),
       kpiDuty: document.getElementById('kpiDuty'),
@@ -1220,6 +1222,58 @@
         }
       } catch (err) {
         console.error('Recycle simulation execution failed:', err);
+      }
+    }
+
+    async function runShortcutSimulation() {
+      updateLabels();
+      const colPressure = parseFloat(els.inpPdrum.value) || 101.325;
+      const feedFlow = parseFloat(els.inpF1.value) || 50.0;
+      const feedTemp = parseFloat(els.inpT1.value) || 340.0;
+
+      const payload = {
+        feedFlowMolPerSec: feedFlow,
+        feedTemperatureKelvin: feedTemp,
+        columnPressureKpa: colPressure,
+        compoundIds: ["C6H6", "C7H8"],
+        feedMoleFractions: [0.50, 0.50],
+        lightKeyIndex: 0,
+        heavyKeyIndex: 1,
+        lightKeyRecoveryDistillate: 0.98,
+        heavyKeyRecoveryBottoms: 0.98,
+        refluxRatioMultiplier: 1.25,
+        model: "Peng-Robinson",
+        correlation: "Molokanov"
+      };
+
+      try {
+        if (els.dagOrderBadge) {
+          els.dagOrderBadge.textContent = 'FUG: Solving Underwood & Gilliland shortcut...';
+          els.dagOrderBadge.style.color = '#38bdf8';
+        }
+
+        const res = await fetch('/api/simulations/shortcut-distillation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        // Auto-configure rigorous column inputs based on shortcut calculation
+        if (els.inpStages) els.inpStages.value = data.recommendedNumberOfStages;
+        if (els.inpFeedStage) els.inpFeedStage.value = data.optimalFeedStage;
+        if (els.inpReflux) els.inpReflux.value = data.operatingRefluxRatio.toFixed(2);
+        if (els.inpDistRate) els.inpDistRate.value = data.distillateFlowMolPerSec.toFixed(1);
+        updateLabels();
+
+        // Display FUG KPIs
+        els.kpiDuty.textContent = `Qc:${data.condenserDutyKilowatts.toFixed(0)}/Qr:${data.reboilerDutyKilowatts.toFixed(0)} kW`;
+        els.kpiBeta.textContent = `FUG: N=${data.recommendedNumberOfStages} (min ${data.minimumStagesNmin.toFixed(1)}), R=${data.operatingRefluxRatio.toFixed(2)} (min ${data.minimumRefluxRatioRmin.toFixed(2)})`;
+        els.kpiVaporY.textContent = `Diam: ~${data.estimatedDiameterMeters.toFixed(2)} m | Top: ${data.topTemperatureCelsius.toFixed(1)}°C, Btm: ${data.bottomTemperatureCelsius.toFixed(1)}°C`;
+        els.dagOrderBadge.textContent = `FUG Sizing: N=${data.recommendedNumberOfStages}, Nf=${data.optimalFeedStage}, R=${data.operatingRefluxRatio.toFixed(2)} (Rmin=${data.minimumRefluxRatioRmin.toFixed(2)}) -> Inputs Auto-Configured!`;
+        els.dagOrderBadge.style.color = '#93c5fd';
+      } catch (err) {
+        console.error('Shortcut distillation simulation failed:', err);
       }
     }
 
@@ -2168,6 +2222,7 @@
     els.selHeavy.addEventListener('change', () => loadTxyDiagram());
     els.btnSimulate.addEventListener('click', runPlantSimulation);
     els.btnSimulateRecycle.addEventListener('click', runRecycleSimulation);
+    if (els.btnSimulateShortcut) els.btnSimulateShortcut.addEventListener('click', runShortcutSimulation);
     els.btnSimulateDistillation.addEventListener('click', runDistillationSimulation);
 
     if (els.btnDistillPlotBoth) els.btnDistillPlotBoth.addEventListener('click', () => setDistillPlotMode('both', els.btnDistillPlotBoth));
