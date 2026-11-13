@@ -631,6 +631,8 @@ public sealed class ProcessFlowsheet
                 "HeaterCooler" => ("#FFEDD5", "#EA580C"),
                 "FlashDrum" => ("#F3E8FF", "#9333EA"),
                 "ConversionReactor" => ("#FCE7F3", "#DB2777"),
+                "ContinuousStirredTankReactor" => ("#FFE4E6", "#E11D48"),
+                "SeriesParallelContinuousStirredTankReactor" => ("#FCE7F3", "#BE185D"),
                 "Splitter" => ("#E0E7FF", "#4F46E5"),
                 "DistillationColumn" => ("#EDE9FE", "#7C3AED"),
                 "ShortcutDistillationColumn" => ("#DDD6FE", "#6D28D9"),
@@ -650,6 +652,11 @@ public sealed class ProcessFlowsheet
                 double qcKw = shortcut.CondenserDutyWatts / 1000.0;
                 double qrKw = shortcut.ReboilerDutyWatts / 1000.0;
                 dutyStr = $" | FUG: N={shortcut.RecommendedNumberOfStages} (min {shortcut.MinimumStagesNmin:F1}), R={shortcut.OperatingRefluxRatio:F2} | Qc={qcKw:F1} kW, Qr={qrKw:F1} kW";
+            }
+            else if (unit is SeriesParallelContinuousStirredTankReactor spCstr)
+            {
+                string runawayTag = spCstr.IsThermalRunaway ? " [RUNAWAY]" : "";
+                dutyStr = $" | X={spCstr.ConversionAPercent:F1}%, S_B={spCstr.SelectivityBPercent:F1}%, Tj={spCstr.JacketOutletTemperatureKelvin:F1}K{runawayTag} | Q = {dutyKw:F2} kW";
             }
             else
             {
