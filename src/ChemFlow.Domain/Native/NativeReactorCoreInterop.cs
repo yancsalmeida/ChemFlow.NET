@@ -55,6 +55,72 @@ public struct CstrAdaptiveStatsFFI
 }
 
 /// <summary>
+/// C-ABI compatible Plain Old Data struct matching CstrSeriesParallelParamsFFI in ReactorCore.C.
+/// Models complex series-parallel kinetics (A -> B -> C and A -> D) with dynamic jacket cooling.
+/// Total size: 176 bytes (22 x 64-bit IEEE-754 doubles).
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct CstrSeriesParallelParamsFFI
+{
+    public double VolumetricFlowLPerMin;
+    public double VolumeLiters;
+    public double RhoCpJPerLK;
+
+    public double K0_1PerMin;
+    public double Ea1OverRKelvin;
+    public double DeltaH1JPerMol;
+
+    public double K0_2PerMin;
+    public double Ea2OverRKelvin;
+    public double DeltaH2JPerMol;
+
+    public double K0_3PerMin;
+    public double Ea3OverRKelvin;
+    public double DeltaH3JPerMol;
+
+    public double CaFeedMolPerL;
+    public double CbFeedMolPerL;
+    public double CcFeedMolPerL;
+    public double CdFeedMolPerL;
+    public double TFeedKelvin;
+
+    public double JacketVolumeLiters;
+    public double JacketFlowLPerMin;
+    public double JacketRhoCpJPerLK;
+    public double JacketTInKelvin;
+    public double UaJPerMinK;
+}
+
+/// <summary>
+/// Detailed state information matching CstrSeriesParallelStateFFI in ReactorCore.C.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct CstrSeriesParallelStateFFI
+{
+    public double CaMolPerL;
+    public double CbMolPerL;
+    public double CcMolPerL;
+    public double CdMolPerL;
+    public double TempKelvin;
+    public double JacketTempKelvin;
+    public double ConversionAPct;
+    public double YieldBPct;
+    public double SelectivityBPct;
+    public double RateR1MolPerLMin;
+    public double RateR2MolPerLMin;
+    public double RateR3MolPerLMin;
+    public double HeatGeneratedWatts;
+    public double HeatRemovedWatts;
+    public byte IsThermalRunawayByte;
+
+    public bool IsThermalRunaway
+    {
+        readonly get => IsThermalRunawayByte != 0;
+        init => IsThermalRunawayByte = (byte)(value ? 1 : 0);
+    }
+}
+
+/// <summary>
 /// High-performance native C-ABI Foreign Function Interface (FFI) bridge
 /// connecting ChemFlow.NET (.NET 8) with the ReactorCore.C (C11) numerical engine.
 /// Includes automatic shared library resolution and managed analytical RK4 fallback.
@@ -66,6 +132,19 @@ public static class NativeReactorCoreInterop
     public static bool IsNativeAvailable { get; }
     public static bool HasNativeSimdSupport { get; }
     public static string VersionString { get; }
+
+    /// <summary>
+    /// Returns the compiled SIMD instruction width: 512 for AVX-512, 256 for AVX2, 0 for scalar.
+    /// </summary>
+    public static int SimdLevel
+    {
+        get
+        {
+            if (!IsNativeAvailable) return 0;
+            try { return NativeMethods.reactor_core_simd_level(); }
+            catch { return 0; }
+        }
+    }
 
     static NativeReactorCoreInterop()
     {
@@ -848,6 +927,446 @@ public static class NativeReactorCoreInterop
         return 0;
     }
 
+    /// <summary>
+    /// Populates series-parallel parameters with literature defaults.
+    /// </summary>
+    public static CstrSeriesParallelParamsFFI GetSeriesParallelDefaultParameters()
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                var p = new CstrSeriesParallelParamsFFI();
+                if (NativeMethods.reactor_cstr_series_parallel_default_params(ref p) == 0)
+                    return p;
+            }
+            catch { }
+        }
+
+        return new CstrSeriesParallelParamsFFI
+        {
+            VolumetricFlowLPerMin = 100.0,
+            VolumeLiters = 100.0,
+            RhoCpJPerLK = 4000.0,
+            K0_1PerMin = 7.08e10,
+            Ea1OverRKelvin = 8330.1,
+            DeltaH1JPerMol = 200000.0,
+            K0_2PerMin = 3.50e9,
+            Ea2OverRKelvin = 7500.0,
+            DeltaH2JPerMol = 120000.0,
+            K0_3PerMin = 1.20e9,
+            Ea3OverRKelvin = 9000.0,
+            DeltaH3JPerMol = 150000.0,
+            CaFeedMolPerL = 1.0,
+            CbFeedMolPerL = 0.0,
+            CcFeedMolPerL = 0.0,
+            CdFeedMolPerL = 0.0,
+            TFeedKelvin = 350.0,
+            JacketVolumeLiters = 25.0,
+            JacketFlowLPerMin = 50.0,
+            JacketRhoCpJPerLK = 4184.0,
+            JacketTInKelvin = 295.0,
+            UaJPerMinK = 40000.0
+        };
+    }
+
+    /// <summary>
+    /// Calculates instantaneous reaction rates for series-parallel kinetics:
+    /// r1 = k1*Ca, r2 = k2*Cb, r3 = k3*Ca.
+    /// </summary>
+    public static void SeriesParallelRates(
+        in CstrSeriesParallelParamsFFI p,
+        double ca,
+        double cb,
+        double tempK,
+        out double r1,
+        out double r2,
+        out double r3)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                if (NativeMethods.reactor_cstr_series_parallel_rates(in p, ca, cb, tempK, out r1, out r2, out r3) == 0)
+                    return;
+            }
+            catch { }
+        }
+
+        ManagedSeriesParallelRates(in p, ca, cb, tempK, out r1, out r2, out r3);
+    }
+
+    /// <summary>
+    /// Advances state [Ca, Cb, Cc, Cd, T, Tj] by a single RK4 step.
+    /// </summary>
+    public static int StepSeriesParallelRk4(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double temp,
+        ref double tempJ,
+        double dt)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_step_rk4(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt);
+            }
+            catch { }
+        }
+
+        return ManagedSeriesParallelStepRk4(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt);
+    }
+
+    /// <summary>
+    /// Advances state and computes detailed metrics (conversion, yield, selectivity, heat rates, runaway).
+    /// </summary>
+    public static int StepSeriesParallelDetailed(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double temp,
+        ref double tempJ,
+        double dt,
+        double runawayThresholdK,
+        out CstrSeriesParallelStateFFI state)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_step_detailed(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt, runawayThresholdK, out state);
+            }
+            catch { }
+        }
+
+        return ManagedSeriesParallelStepDetailed(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt, runawayThresholdK, out state);
+    }
+
+    /// <summary>
+    /// Advances an ensemble of N series-parallel reactors simultaneously via SIMD AVX-512/AVX2 vectorization.
+    /// </summary>
+    public static int StepSeriesParallelBatchRk4(
+        in CstrSeriesParallelParamsFFI p,
+        double[] ca,
+        double[] cb,
+        double[] cc,
+        double[] cd,
+        double[] temp,
+        double[] tempJ,
+        double dt)
+    {
+        int n = ca.Length;
+        if (cb.Length != n || cc.Length != n || cd.Length != n || temp.Length != n || tempJ.Length != n || n == 0 || dt <= 0.0)
+            return -1;
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_batch_step_rk4(in p, ca, cb, cc, cd, temp, tempJ, (nuint)n, dt);
+            }
+            catch { }
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            ManagedSeriesParallelStepRk4(in p, ref ca[i], ref cb[i], ref cc[i], ref cd[i], ref temp[i], ref tempJ[i], dt);
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Advances an ensemble of N series-parallel reactors and evaluates detailed telemetry.
+    /// </summary>
+    public static int StepSeriesParallelBatchDetailed(
+        in CstrSeriesParallelParamsFFI p,
+        double[] ca,
+        double[] cb,
+        double[] cc,
+        double[] cd,
+        double[] temp,
+        double[] tempJ,
+        double dt,
+        double runawayThresholdK,
+        CstrSeriesParallelStateFFI[] outStates)
+    {
+        int n = ca.Length;
+        if (cb.Length != n || cc.Length != n || cd.Length != n || temp.Length != n || tempJ.Length != n || outStates.Length != n || n == 0 || dt <= 0.0)
+            return -1;
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_batch_step_detailed(in p, ca, cb, cc, cd, temp, tempJ, (nuint)n, dt, runawayThresholdK, outStates);
+            }
+            catch { }
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            ManagedSeriesParallelStepDetailed(in p, ref ca[i], ref cb[i], ref cc[i], ref cd[i], ref temp[i], ref tempJ[i], dt, runawayThresholdK, out outStates[i]);
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Simulates parallel dynamic trajectories for N series-parallel reactors.
+    /// </summary>
+    public static int SimulateSeriesParallelBatchTrajectory(
+        in CstrSeriesParallelParamsFFI p,
+        double[] ca0,
+        double[] cb0,
+        double[] cc0,
+        double[] cd0,
+        double[] temp0,
+        double[] tempJ0,
+        double dt,
+        nuint steps,
+        double[] outTime,
+        double[] outCa,
+        double[] outCb,
+        double[] outCc,
+        double[] outCd,
+        double[] outTemp,
+        double[] outTempJ)
+    {
+        int n = ca0.Length;
+        if (cb0.Length != n || cc0.Length != n || cd0.Length != n || temp0.Length != n || tempJ0.Length != n || n == 0 || dt <= 0.0)
+            return -1;
+
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_batch_simulate_trajectory(
+                    in p, ca0, cb0, cc0, cd0, temp0, tempJ0, (nuint)n, dt, steps,
+                    outTime, outCa, outCb, outCc, outCd, outTemp, outTempJ
+                );
+            }
+            catch { }
+        }
+
+        // Managed fallback
+        double[] curCa = (double[])ca0.Clone();
+        double[] curCb = (double[])cb0.Clone();
+        double[] curCc = (double[])cc0.Clone();
+        double[] curCd = (double[])cd0.Clone();
+        double[] curT = (double[])temp0.Clone();
+        double[] curTj = (double[])tempJ0.Clone();
+
+        outTime[0] = 0.0;
+        for (int j = 0; j < n; j++)
+        {
+            outCa[j] = curCa[j];
+            outCb[j] = curCb[j];
+            outCc[j] = curCc[j];
+            outCd[j] = curCd[j];
+            outTemp[j] = curT[j];
+            outTempJ[j] = curTj[j];
+        }
+
+        for (nuint s = 1; s <= steps; s++)
+        {
+            outTime[s] = (double)s * dt;
+            int offset = (int)s * n;
+            for (int j = 0; j < n; j++)
+            {
+                ManagedSeriesParallelStepRk4(in p, ref curCa[j], ref curCb[j], ref curCc[j], ref curCd[j], ref curT[j], ref curTj[j], dt);
+                outCa[offset + j] = curCa[j];
+                outCb[offset + j] = curCb[j];
+                outCc[offset + j] = curCc[j];
+                outCd[offset + j] = curCd[j];
+                outTemp[offset + j] = curT[j];
+                outTempJ[offset + j] = curTj[j];
+            }
+        }
+        return 0;
+    }
+
+    #region Managed Series-Parallel Reference Engine
+
+    private static void ManagedSeriesParallelRates(
+        in CstrSeriesParallelParamsFFI p,
+        double ca,
+        double cb,
+        double tempK,
+        out double r1,
+        out double r2,
+        out double r3)
+    {
+        if (tempK <= 0.0)
+        {
+            r1 = r2 = r3 = 0.0;
+            return;
+        }
+
+        double evalCa = Math.Max(0.0, ca);
+        double evalCb = Math.Max(0.0, cb);
+        double evalT = Math.Max(50.0, tempK);
+
+        double k1 = p.K0_1PerMin * Math.Exp(-p.Ea1OverRKelvin / evalT);
+        double k2 = p.K0_2PerMin * Math.Exp(-p.Ea2OverRKelvin / evalT);
+        double k3 = p.K0_3PerMin * Math.Exp(-p.Ea3OverRKelvin / evalT);
+
+        r1 = k1 * evalCa;
+        r2 = k2 * evalCb;
+        r3 = k3 * evalCa;
+    }
+
+    private static void ManagedSeriesParallelDerivatives(
+        in CstrSeriesParallelParamsFFI p,
+        double ca,
+        double cb,
+        double cc,
+        double cd,
+        double temp,
+        double tempJ,
+        out double dCa,
+        out double dCb,
+        out double dCc,
+        out double dCd,
+        out double dTemp,
+        out double dTempJ)
+    {
+        double evalCa = Math.Max(0.0, ca);
+        double evalCb = Math.Max(0.0, cb);
+        double evalCc = Math.Max(0.0, cc);
+        double evalCd = Math.Max(0.0, cd);
+        double evalT = Math.Max(50.0, temp);
+        double evalTj = Math.Max(50.0, tempJ);
+
+        ManagedSeriesParallelRates(in p, evalCa, evalCb, evalT, out double r1, out double r2, out double r3);
+
+        double spaceTimeInv = p.VolumetricFlowLPerMin / p.VolumeLiters;
+        double qjOverVj = p.JacketFlowLPerMin / p.JacketVolumeLiters;
+
+        double heatGen = (p.DeltaH1JPerMol * r1 + p.DeltaH2JPerMol * r2 + p.DeltaH3JPerMol * r3) / p.RhoCpJPerLK;
+        double heatRemReactor = (p.UaJPerMinK / (p.VolumeLiters * p.RhoCpJPerLK)) * (evalT - evalTj);
+        double heatRemJacket = (p.UaJPerMinK / (p.JacketVolumeLiters * p.JacketRhoCpJPerLK)) * (evalT - evalTj);
+
+        dCa = spaceTimeInv * (p.CaFeedMolPerL - evalCa) - r1 - r3;
+        dCb = spaceTimeInv * (p.CbFeedMolPerL - evalCb) + r1 - r2;
+        dCc = spaceTimeInv * (p.CcFeedMolPerL - evalCc) + r2;
+        dCd = spaceTimeInv * (p.CdFeedMolPerL - evalCd) + r3;
+        dTemp = spaceTimeInv * (p.TFeedKelvin - evalT) + heatGen - heatRemReactor;
+        dTempJ = qjOverVj * (p.JacketTInKelvin - evalTj) + heatRemJacket;
+    }
+
+    private static int ManagedSeriesParallelStepRk4(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double temp,
+        ref double tempJ,
+        double dt)
+    {
+        if (dt <= 0.0) return -1;
+        double halfDt = 0.5 * dt;
+
+        // Stage 1
+        ManagedSeriesParallelDerivatives(in p, ca, cb, cc, cd, temp, tempJ,
+            out double k1_ca, out double k1_cb, out double k1_cc, out double k1_cd, out double k1_t, out double k1_tj);
+
+        // Stage 2
+        ManagedSeriesParallelDerivatives(in p,
+            ca + halfDt * k1_ca, cb + halfDt * k1_cb, cc + halfDt * k1_cc, cd + halfDt * k1_cd,
+            temp + halfDt * k1_t, tempJ + halfDt * k1_tj,
+            out double k2_ca, out double k2_cb, out double k2_cc, out double k2_cd, out double k2_t, out double k2_tj);
+
+        // Stage 3
+        ManagedSeriesParallelDerivatives(in p,
+            ca + halfDt * k2_ca, cb + halfDt * k2_cb, cc + halfDt * k2_cc, cd + halfDt * k2_cd,
+            temp + halfDt * k2_t, tempJ + halfDt * k2_tj,
+            out double k3_ca, out double k3_cb, out double k3_cc, out double k3_cd, out double k3_t, out double k3_tj);
+
+        // Stage 4
+        ManagedSeriesParallelDerivatives(in p,
+            ca + dt * k3_ca, cb + dt * k3_cb, cc + dt * k3_cc, cd + dt * k3_cd,
+            temp + dt * k3_t, tempJ + dt * k3_tj,
+            out double k4_ca, out double k4_cb, out double k4_cc, out double k4_cd, out double k4_t, out double k4_tj);
+
+        double dtSix = dt / 6.0;
+        ca += dtSix * (k1_ca + 2.0 * k2_ca + 2.0 * k3_ca + k4_ca);
+        cb += dtSix * (k1_cb + 2.0 * k2_cb + 2.0 * k3_cb + k4_cb);
+        cc += dtSix * (k1_cc + 2.0 * k2_cc + 2.0 * k3_cc + k4_cc);
+        cd += dtSix * (k1_cd + 2.0 * k2_cd + 2.0 * k3_cd + k4_cd);
+        temp += dtSix * (k1_t + 2.0 * k2_t + 2.0 * k3_t + k4_t);
+        tempJ += dtSix * (k1_tj + 2.0 * k2_tj + 2.0 * k3_tj + k4_tj);
+
+        if (ca < 0.0) ca = 0.0;
+        if (cb < 0.0) cb = 0.0;
+        if (cc < 0.0) cc = 0.0;
+        if (cd < 0.0) cd = 0.0;
+        if (temp < 50.0) temp = 50.0;
+        if (tempJ < 50.0) tempJ = 50.0;
+
+        return 0;
+    }
+
+    private static int ManagedSeriesParallelStepDetailed(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double temp,
+        ref double tempJ,
+        double dt,
+        double runawayThresholdK,
+        out CstrSeriesParallelStateFFI state)
+    {
+        int rc = ManagedSeriesParallelStepRk4(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt);
+        if (rc != 0)
+        {
+            state = default;
+            return rc;
+        }
+
+        ManagedSeriesParallelRates(in p, ca, cb, temp, out double r1, out double r2, out double r3);
+
+        double ca0 = p.CaFeedMolPerL > 1e-12 ? p.CaFeedMolPerL : 1.0;
+        double convA = ((p.CaFeedMolPerL - ca) / ca0) * 100.0;
+        double yieldB = ((cb - p.CbFeedMolPerL) / ca0) * 100.0;
+
+        double totalProd = cb + cc + cd;
+        double selectB = totalProd > 1e-12 ? (cb / totalProd) * 100.0 : 100.0;
+
+        double heatGenJPerMin = p.VolumeLiters * (p.DeltaH1JPerMol * r1 + p.DeltaH2JPerMol * r2 + p.DeltaH3JPerMol * r3);
+        double heatRemJPerMin = p.UaJPerMinK * (temp - tempJ);
+
+        state = new CstrSeriesParallelStateFFI
+        {
+            CaMolPerL = ca,
+            CbMolPerL = cb,
+            CcMolPerL = cc,
+            CdMolPerL = cd,
+            TempKelvin = temp,
+            JacketTempKelvin = tempJ,
+            ConversionAPct = convA,
+            YieldBPct = yieldB,
+            SelectivityBPct = selectB,
+            RateR1MolPerLMin = r1,
+            RateR2MolPerLMin = r2,
+            RateR3MolPerLMin = r3,
+            HeatGeneratedWatts = heatGenJPerMin / 60.0,
+            HeatRemovedWatts = heatRemJPerMin / 60.0,
+            IsThermalRunaway = (temp >= runawayThresholdK)
+        };
+
+        return 0;
+    }
+
+    #endregion
+
     private static class NativeMethods
     {
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
@@ -957,6 +1476,98 @@ public static class NativeReactorCoreInterop
             [Out] double[] out_time,
             [Out] double[] out_ca,
             [Out] double[] out_temp
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_core_simd_level();
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_default_params(ref CstrSeriesParallelParamsFFI out_params);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_rates(
+            in CstrSeriesParallelParamsFFI parameters,
+            double Ca,
+            double Cb,
+            double T,
+            out double out_r1,
+            out double out_r2,
+            out double out_r3
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_step_rk4(
+            in CstrSeriesParallelParamsFFI parameters,
+            ref double ca,
+            ref double cb,
+            ref double cc,
+            ref double cd,
+            ref double temp,
+            ref double temp_j,
+            double dt
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_step_detailed(
+            in CstrSeriesParallelParamsFFI parameters,
+            ref double ca,
+            ref double cb,
+            ref double cc,
+            ref double cd,
+            ref double temp,
+            ref double temp_j,
+            double dt,
+            double runaway_threshold_k,
+            out CstrSeriesParallelStateFFI out_state
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_batch_step_rk4(
+            in CstrSeriesParallelParamsFFI parameters,
+            [In, Out] double[] ca_array,
+            [In, Out] double[] cb_array,
+            [In, Out] double[] cc_array,
+            [In, Out] double[] cd_array,
+            [In, Out] double[] temp_array,
+            [In, Out] double[] temp_j_array,
+            nuint n_reactors,
+            double dt
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_batch_step_detailed(
+            in CstrSeriesParallelParamsFFI parameters,
+            [In, Out] double[] ca_array,
+            [In, Out] double[] cb_array,
+            [In, Out] double[] cc_array,
+            [In, Out] double[] cd_array,
+            [In, Out] double[] temp_array,
+            [In, Out] double[] temp_j_array,
+            nuint n_reactors,
+            double dt,
+            double runaway_threshold_k,
+            [In, Out] CstrSeriesParallelStateFFI[] out_states
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_batch_simulate_trajectory(
+            in CstrSeriesParallelParamsFFI parameters,
+            [In] double[] ca0,
+            [In] double[] cb0,
+            [In] double[] cc0,
+            [In] double[] cd0,
+            [In] double[] temp0,
+            [In] double[] temp_j0,
+            nuint n_reactors,
+            double dt,
+            nuint steps,
+            [Out] double[] out_time,
+            [Out] double[] out_ca,
+            [Out] double[] out_cb,
+            [Out] double[] out_cc,
+            [Out] double[] out_cd,
+            [Out] double[] out_temp,
+            [Out] double[] out_temp_j
         );
     }
 }
