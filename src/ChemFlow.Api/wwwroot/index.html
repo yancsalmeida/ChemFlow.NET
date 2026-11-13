@@ -522,6 +522,7 @@
       <button class="btn-secondary" id="btnSimulateRecycle" style="width: 100%; margin-top: 0.5rem; border-color: #a855f7; color: #d8b4fe; background: rgba(168, 85, 247, 0.1);">Solve Closed-Loop Recycle (Wegstein Secant)</button>
       <button class="btn-secondary" id="btnSimulateShortcut" style="width: 100%; margin-top: 0.5rem; border-color: #3b82f6; color: #93c5fd; background: rgba(59, 130, 246, 0.12);">Design Shortcut Distillation (FUG Shortcut)</button>
       <button class="btn-secondary" id="btnSimulateDistillation" style="width: 100%; margin-top: 0.5rem; border-color: #7c3aed; color: #c4b5fd; background: rgba(124, 58, 237, 0.12);">Solve Rigorous Distillation (Wang-Henke MESH)</button>
+      <button class="btn-secondary" id="btnSimulateSeriesParallelPlant" style="width: 100%; margin-top: 0.5rem; border-color: #ec4899; color: #f9a8d4; background: rgba(236, 72, 153, 0.12);">Solve Series-Parallel CSTR Plant (A&rarr;B&rarr;C / A&rarr;D)</button>
 
       <div class="panel-header" style="margin-top: 1.5rem;">
         <h2>Binary VLE T-x-y Diagram</h2>
@@ -676,10 +677,17 @@
               Continuous Stirred-Tank Reactor (CSTR) — Exothermic Reaction with Runaway Interlock Protection
             </div>
           </div>
-          <div style="display: flex; gap: 0.6rem; align-items: center;">
+          <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
             <span class="pill-badge" id="telemetryEngineBadge" style="background: rgba(6, 182, 212, 0.15); border-color: rgba(6, 182, 212, 0.4); color: #67e8f9;">
               Engine: Native C11 (RK4)
             </span>
+            <select id="selCstrStreamMode" style="background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 0.3rem 0.5rem; font-size: 0.78rem;">
+              <option value="series-parallel" selected>Series-Parallel (A&rarr;B&rarr;C, A&rarr;D + Jacket Tj)</option>
+              <option value="single">Single-Reaction CSTR (A&rarr;B, Fixed Tc)</option>
+            </select>
+            <button class="btn-secondary" id="btnLoadRunawayProfile" style="border-color: #f43f5e; color: #fda4af; background: rgba(244, 63, 94, 0.12); padding: 0.35rem 0.75rem; font-size: 0.78rem;">
+              Compare Nominal vs Runaway
+            </button>
             <button class="btn-primary" id="btnStartCstrStream" style="background: #0891b2; border-color: #06b6d4; padding: 0.35rem 0.85rem; font-size: 0.82rem;">
               &#9654; Start Live Stream
             </button>
@@ -725,6 +733,10 @@
 
         <!-- Live Strip Chart Canvas -->
         <div style="background: #080c14; border-radius: 8px; padding: 0.75rem; border: 1px solid var(--border); position: relative; margin-bottom: 0.75rem;">
+          <div id="liveSeriesParallelStrip" style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.76rem; color: #cbd5e1; margin-bottom: 0.55rem; padding: 0.45rem 0.65rem; background: rgba(15, 23, 42, 0.7); border-radius: 6px; border: 1px solid rgba(51, 65, 85, 0.7);">
+            <span id="liveKpiSpecies">Ca: 1.000 | Cb: 0.000 | Cc: 0.000 | Cd: 0.000 mol/L</span>
+            <span id="liveKpiSelectivity" style="color: #f9a8d4;">SB: -- % | YB: -- % | Jacket Tj: -- °C</span>
+          </div>
           <canvas id="cstrLiveCanvas" width="980" height="230" style="display: block; width: 100%; height: auto; max-height: 240px;"></canvas>
           <div id="cstrLiveBanner" style="display: none; position: absolute; top: 1rem; right: 1rem; background: rgba(244, 63, 94, 0.9); color: #fff; padding: 0.4rem 0.8rem; border-radius: 6px; font-weight: 700; font-family: var(--font-mono); font-size: 0.78rem;">
             CRITICAL THERMAL RUNAWAY EXCURSION
@@ -956,6 +968,7 @@
       btnSimulateRecycle: document.getElementById('btnSimulateRecycle'),
       btnSimulateShortcut: document.getElementById('btnSimulateShortcut'),
       btnSimulateDistillation: document.getElementById('btnSimulateDistillation'),
+      btnSimulateSeriesParallelPlant: document.getElementById('btnSimulateSeriesParallelPlant'),
       streamTableBody: document.getElementById('streamTableBody'),
       kpiDuty: document.getElementById('kpiDuty'),
       kpiBeta: document.getElementById('kpiBeta'),
@@ -1032,7 +1045,13 @@
       inpLiveCa0: document.getElementById('inpLiveCa0'),
       lblLiveCa0: document.getElementById('lblLiveCa0'),
       inpLiveT0: document.getElementById('inpLiveT0'),
-      lblLiveT0: document.getElementById('lblLiveT0')
+      lblLiveT0: document.getElementById('lblLiveT0'),
+      selCstrStreamMode: document.getElementById('selCstrStreamMode'),
+      btnLoadRunawayProfile: document.getElementById('btnLoadRunawayProfile'),
+      liveSeriesParallelStrip: document.getElementById('liveSeriesParallelStrip'),
+      liveKpiSpecies: document.getElementById('liveKpiSpecies'),
+      liveKpiSelectivity: document.getElementById('liveKpiSelectivity'),
+      telemetryEngineBadge: document.getElementById('telemetryEngineBadge')
     };
 
     let currentStageProfiles = [];
@@ -1369,6 +1388,76 @@
       }
     }
 
+    async function runSeriesParallelPlantSimulation() {
+      updateLabels();
+      const feedFlow = parseFloat(els.inpF1?.value || '48.0') || 48.0;
+      const feedTemp = parseFloat(els.inpT1?.value || '345.0') || 345.0;
+      const colPressure = parseFloat(els.inpPdrum?.value || '150.0') || 150.0;
+      const jacketTemp = parseFloat(els.inpLiveTc?.value || '345.0') || 345.0;
+
+      const payload = {
+        freshFeedFlowMolPerSec: Math.max(4.0, Math.min(25.0, feedFlow * 0.25)),
+        freshFeedTemperatureKelvin: Math.max(300.0, Math.min(365.0, feedTemp)),
+        columnPressureKpa: Math.max(80.0, colPressure),
+        reactorVolumeLiters: 110.0,
+        coolingUaWattsPerKelvin: 4000.0,
+        jacketInletTemperatureKelvin: Math.max(295.0, Math.min(350.0, jacketTemp)),
+        maxSafeTemperatureKelvin: 450.0,
+        recycleFraction: 0.85,
+        useHighExothermKinetics: false,
+        model: "Raoult",
+        method: "Wegstein",
+        tolerance: 1e-5
+      };
+
+      try {
+        if (els.dagOrderBadge) {
+          els.dagOrderBadge.textContent = 'Series-Parallel CSTR Plant: Converging Recycle + FUG Columns...';
+          els.dagOrderBadge.style.color = '#f9a8d4';
+        }
+
+        const res = await fetch('/api/simulations/series-parallel-plant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.detail || data?.title || 'Simulation failed');
+
+        renderPlantData(data);
+        currentRunId = data.savedSimulationRunId;
+
+        if (els.distillationPanel) els.distillationPanel.style.display = 'none';
+
+        els.kpiDuty.textContent = `${data.reactorTemperatureCelsius.toFixed(1)}°C / Tj:${data.jacketOutletTemperatureCelsius.toFixed(1)}°C`;
+        els.kpiBeta.textContent = `X_A:${data.singlePassConversionAPercent.toFixed(1)}% (Plant:${data.overallPlantConversionAPercent.toFixed(1)}%)`;
+        els.kpiVaporY.textContent = `S_B:${data.selectivityBPercent.toFixed(1)}% | Y_B:${data.yieldBPercent.toFixed(1)}% | B:${(data.productBPurityMoleFraction * 100).toFixed(1)}%`;
+        els.dagOrderBadge.textContent = `R-101+C-101/C-102: ${data.recycleIterations} Wegstein iters (${data.isUsingNativeCore ? 'Native C11' : 'Managed'})`;
+        els.dagOrderBadge.style.color = '#f9a8d4';
+
+        const [topologyRes, reportRes] = await Promise.all([
+          fetch(data.topologyUrl || `/api/simulations/${currentRunId}/topology`),
+          fetch(data.balanceReportUrl || `/api/simulations/${currentRunId}/report`)
+        ]);
+
+        if (topologyRes.ok) {
+          const topology = await topologyRes.json();
+          renderTopologyData(topology, currentRunId);
+        }
+
+        if (reportRes.ok) {
+          const report = await reportRes.json();
+          renderBalanceReport(report, currentRunId);
+        }
+      } catch (err) {
+        console.error('Series-parallel plant simulation failed:', err);
+        if (els.dagOrderBadge) {
+          els.dagOrderBadge.textContent = `Series-Parallel Plant Error: ${err.message}`;
+          els.dagOrderBadge.style.color = '#fb7185';
+        }
+      }
+    }
+
     function setDistillPlotMode(mode, activeBtn) {
       currentPlotMode = mode;
       [els.btnDistillPlotBoth, els.btnDistillPlotTemp, els.btnDistillPlotComp, els.btnDistillPlotFlows].forEach(b => {
@@ -1667,7 +1756,16 @@
         els.dagOrderBadge.style.color = '#34d399';
       }
 
-      els.streamTableBody.innerHTML = data.streams.map(s => `
+      els.streamTableBody.innerHTML = data.streams.map(s => {
+        const mf = s.moleFractions || {};
+        const isSeriesParallel = mf['n-C5H12'] !== undefined || mf['p-C8H10'] !== undefined;
+        const compColA = isSeriesParallel
+          ? `A:${(mf['n-C5H12'] ?? 0).toFixed(3)} B:${(mf['C6H6'] ?? 0).toFixed(3)}`
+          : (mf['C6H6'] ?? 0).toFixed(4);
+        const compColB = isSeriesParallel
+          ? `C:${(mf['C7H8'] ?? 0).toFixed(3)} D:${(mf['p-C8H10'] ?? 0).toFixed(3)}`
+          : (mf['C7H8'] ?? 0).toFixed(4);
+        return `
         <tr>
           <td style="font-weight:700; color:#38bdf8;">${s.id}</td>
           <td>${s.name}</td>
@@ -1677,10 +1775,11 @@
           <td>${s.pressureKpa.toFixed(2)}</td>
           <td>${s.vaporFractionBeta.toFixed(4)}</td>
           <td>${s.totalEnthalpyFlowKilowatts.toFixed(2)}</td>
-          <td>${(s.moleFractions['C6H6'] ?? 0).toFixed(4)}</td>
-          <td>${(s.moleFractions['C7H8'] ?? 0).toFixed(4)}</td>
+          <td>${compColA}</td>
+          <td>${compColB}</td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function renderTopologyData(topology, runId) {
@@ -1937,36 +2036,117 @@
         return;
       }
 
-      const req = {
-        initialConcentrationA: parseFloat(els.inpLiveCa0?.value || '1.0'),
-        initialTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '350.0'),
-        feedConcentrationA: parseFloat(els.inpLiveCa0?.value || '1.0'),
-        feedTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '350.0'),
-        coolantTemperatureKelvin: parseFloat(els.inpLiveTc?.value || '300.0'),
-        volumetricFlowRateLitersPerMin: parseFloat(els.inpLiveFlow?.value || '100.0'),
-        timeStepMinutes: 0.05,
-        intervalMs: 100,
-        maxFrames: 600
-      };
+      const mode = els.selCstrStreamMode ? els.selCstrStreamMode.value : 'series-parallel';
+      runawayOverlayProfile = null;
+      cstrHistory = [];
+      drawCstrLiveChart(cstrHistory);
 
       if (els.btnStartCstrStream) els.btnStartCstrStream.style.display = 'none';
       if (els.btnStopCstrStream) els.btnStopCstrStream.style.display = 'inline-block';
 
-      cstrHistory = [];
-      drawCstrLiveChart(cstrHistory);
-
       try {
-        cstrStreamSubscription = signalrConnection.stream('StreamCstrSimulation', req).subscribe({
-          next: (frame) => handleCstrTelemetryFrame(frame),
-          complete: () => stopCstrStream(),
-          error: (err) => {
-            console.error('CSTR stream error:', err);
-            stopCstrStream();
+        if (mode === 'series-parallel') {
+          const spReq = {
+            volumetricFlowLPerMin: parseFloat(els.inpLiveFlow?.value || '100.0'),
+            reactorVolumeLiters: 100.0,
+            feedCaMolPerL: parseFloat(els.inpLiveCa0?.value || '1.0'),
+            feedCbMolPerL: 0.0,
+            feedTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '325.0'),
+            jacketInletTemperatureKelvin: parseFloat(els.inpLiveTc?.value || '295.0'),
+            coolingUaWattsPerKelvin: 666.67,
+            maxSafeTemperatureKelvin: 420.0,
+            timeStepMinutes: 0.02,
+            maxFrames: 120,
+            intervalMs: 120
+          };
+          if (els.telemetrySubtitle) {
+            els.telemetrySubtitle.textContent = 'Series-Parallel CSTR (A -> B -> C, A -> D + Jacket Tj) — Real-Time RK4 Telemetry';
           }
-        });
+          cstrStreamSubscription = signalrConnection.stream('StreamSeriesParallelCstrSimulation', spReq).subscribe({
+            next: (frame) => handleCstrTelemetryFrame(frame),
+            complete: () => stopCstrStream(),
+            error: (err) => {
+              console.error('Series-parallel CSTR stream error:', err);
+              stopCstrStream();
+            }
+          });
+        } else {
+          const req = {
+            initialConcentrationA: parseFloat(els.inpLiveCa0?.value || '1.0'),
+            initialTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '350.0'),
+            feedConcentrationA: parseFloat(els.inpLiveCa0?.value || '1.0'),
+            feedTemperatureKelvin: parseFloat(els.inpLiveT0?.value || '350.0'),
+            coolantTemperatureKelvin: parseFloat(els.inpLiveTc?.value || '300.0'),
+            volumetricFlowRateLitersPerMin: parseFloat(els.inpLiveFlow?.value || '100.0'),
+            timeStepMinutes: 0.05,
+            intervalMs: 100,
+            maxFrames: 600
+          };
+          if (els.telemetrySubtitle) {
+            els.telemetrySubtitle.textContent = 'Single-Reaction CSTR (A -> B) — Exothermic Reaction with Runaway Interlock Protection';
+          }
+          cstrStreamSubscription = signalrConnection.stream('StreamCstrSimulation', req).subscribe({
+            next: (frame) => handleCstrTelemetryFrame(frame),
+            complete: () => stopCstrStream(),
+            error: (err) => {
+              console.error('CSTR stream error:', err);
+              stopCstrStream();
+            }
+          });
+        }
       } catch (err) {
         console.error('Failed to initiate CSTR stream:', err);
         stopCstrStream();
+      }
+    }
+
+    async function loadRunawayProfile() {
+      stopCstrStream();
+      const q = parseFloat(els.inpLiveFlow?.value || '100.0');
+      const ca0 = parseFloat(els.inpLiveCa0?.value || '1.0');
+      const tj = parseFloat(els.inpLiveTc?.value || '295.0');
+      const tRunaway = Math.max(350.0, parseFloat(els.inpLiveT0?.value || '350.0'));
+
+      try {
+        const res = await fetch('/api/telemetry/cstr/series-parallel/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            volumetricFlowLPerMin: q,
+            reactorVolumeLiters: 100.0,
+            feedCaMolPerL: ca0,
+            nominalFeedTemperatureKelvin: 325.0,
+            nominalCoolingUaWattsPerKelvin: 666.67,
+            runawayFeedTemperatureKelvin: tRunaway,
+            runawayCoolingUaWattsPerKelvin: 60.0,
+            jacketInletTemperatureKelvin: Math.min(305.0, tj),
+            maxSafeTemperatureKelvin: 420.0,
+            timeStepMinutes: 0.02,
+            steps: 80
+          })
+        });
+        const profile = await res.json();
+        if (!res.ok) throw new Error(profile?.detail || 'Profile failed');
+
+        runawayOverlayProfile = profile;
+        cstrHistory = (profile.nominalTrajectory || []).map(f => ({
+          ...f,
+          reactantConcentrationMolPerLiter: f.caMolPerL
+        }));
+
+        const lastNom = profile.nominalTrajectory?.[profile.nominalTrajectory.length - 1];
+        const lastRun = profile.runawayTrajectory?.[profile.runawayTrajectory.length - 1];
+        if (lastRun) {
+          handleCstrTelemetryFrame(lastRun);
+          cstrHistory.pop();
+        }
+        if (lastNom && els.liveKpiSpecies && els.liveKpiSelectivity) {
+          els.liveKpiSpecies.textContent = `Nominal Final Ca:${lastNom.caMolPerL.toFixed(3)} Cb:${lastNom.cbMolPerL.toFixed(3)} | Peak: ${profile.nominalPeakTemperatureCelsius.toFixed(1)} °C`;
+          els.liveKpiSelectivity.textContent = `Runaway Peak: ${profile.runawayPeakTemperatureCelsius.toFixed(1)} °C (Trip ${profile.maxSafeTemperatureCelsius.toFixed(1)} °C) | Nominal SB: ${lastNom.selectivityBPct.toFixed(1)}%`;
+        }
+        drawCstrLiveChart(cstrHistory);
+      } catch (err) {
+        console.error('Failed to load runaway profile:', err);
       }
     }
 
@@ -1984,17 +2164,45 @@
       if (els.btnStopCstrStream) els.btnStopCstrStream.style.display = 'none';
     }
 
-    function handleCstrTelemetryFrame(frame) {
-      if (els.liveKpiTemp) els.liveKpiTemp.textContent = `${frame.temperatureCelsius.toFixed(1)} °C`;
-      if (els.liveKpiTempK) els.liveKpiTempK.textContent = `${frame.temperatureKelvin.toFixed(2)} K`;
-      if (els.liveKpiCa) els.liveKpiCa.textContent = `${frame.reactantConcentrationMolPerLiter.toFixed(3)} mol/L`;
-      if (els.liveKpiCaFeed) els.liveKpiCaFeed.textContent = `Feed: ${(parseFloat(els.inpLiveCa0?.value || '1.0')).toFixed(2)} mol/L`;
-      if (els.liveKpiConv) els.liveKpiConv.textContent = `${(frame.conversionRatio * 100).toFixed(1)} %`;
-      if (els.liveKpiRate) els.liveKpiRate.textContent = `${frame.reactionRateMolPerLiterMin.toFixed(4)} mol/L·min`;
-      if (els.liveKpiDuty) els.liveKpiDuty.textContent = `${frame.coolingDutyKilowatts.toFixed(2)} kW`;
-      if (els.liveKpiTc) els.liveKpiTc.textContent = `Tc: ${(parseFloat(els.inpLiveTc?.value || '300')).toFixed(1)} K`;
+    let runawayOverlayProfile = null;
 
-      if (frame.isThermalRunaway) {
+    function handleCstrTelemetryFrame(frame) {
+      const isSp = frame.cbMolPerL !== undefined || frame.jacketTemperatureKelvin !== undefined;
+      const tempC = frame.temperatureCelsius ?? (frame.temperatureKelvin - 273.15);
+      const tempK = frame.temperatureKelvin ?? (tempC + 273.15);
+      const ca = isSp ? (frame.caMolPerL ?? 0) : (frame.reactantConcentrationMolPerL ?? frame.reactantConcentrationMolPerLiter ?? 0);
+      const convPct = isSp ? (frame.conversionAPct ?? 0) : (frame.conversionPct ?? ((frame.conversionRatio ?? 0) * 100));
+      const rateVal = isSp ? (frame.rateR1MolPerLMin ?? 0) : (frame.reactionRateMolPerLMin ?? frame.reactionRateMolPerLiterMin ?? 0);
+      const dutyKw = isSp ? (((frame.heatGeneratedWatts ?? 0) - (frame.heatRemovedWatts ?? 0)) / 1000.0) : (frame.coolingDutyKilowatts ?? 0);
+      const isRunaway = Boolean(frame.isThermalRunaway ?? frame.isRunaway);
+
+      if (els.liveKpiTemp) els.liveKpiTemp.textContent = `${tempC.toFixed(1)} °C`;
+      if (els.liveKpiTempK) els.liveKpiTempK.textContent = `${tempK.toFixed(2)} K`;
+      if (els.liveKpiCa) els.liveKpiCa.textContent = `${ca.toFixed(3)} mol/L`;
+      if (els.liveKpiCaFeed) els.liveKpiCaFeed.textContent = `Feed: ${(parseFloat(els.inpLiveCa0?.value || '1.0')).toFixed(2)} mol/L`;
+      if (els.liveKpiConv) els.liveKpiConv.textContent = `${convPct.toFixed(1)} %`;
+      if (els.liveKpiRate) els.liveKpiRate.textContent = `${rateVal.toFixed(4)} mol/L·min`;
+      if (els.liveKpiDuty) els.liveKpiDuty.textContent = `${dutyKw.toFixed(2)} kW`;
+      if (els.liveKpiTc) {
+        els.liveKpiTc.textContent = isSp
+          ? `Tj: ${(frame.jacketTemperatureKelvin ?? 295).toFixed(1)} K (${(frame.jacketTemperatureCelsius ?? 21.9).toFixed(1)} °C)`
+          : `Tc: ${(parseFloat(els.inpLiveTc?.value || '300')).toFixed(1)} K`;
+      }
+      if (els.telemetryEngineBadge && frame.engineMode) {
+        els.telemetryEngineBadge.textContent = `Engine: ${frame.engineMode}`;
+      }
+      if (els.liveKpiSpecies) {
+        els.liveKpiSpecies.textContent = isSp
+          ? `Ca: ${ca.toFixed(3)} | Cb: ${(frame.cbMolPerL ?? 0).toFixed(3)} | Cc: ${(frame.ccMolPerL ?? 0).toFixed(3)} | Cd: ${(frame.cdMolPerL ?? 0).toFixed(3)} mol/L`
+          : `Single-Reaction Ca: ${ca.toFixed(3)} mol/L (Cb/Cc/Cd inactive)`;
+      }
+      if (els.liveKpiSelectivity) {
+        els.liveKpiSelectivity.textContent = isSp
+          ? `SB: ${(frame.selectivityBPct ?? 0).toFixed(1)}% | YB: ${(frame.yieldBPct ?? 0).toFixed(1)}% | Tj: ${(frame.jacketTemperatureCelsius ?? 0).toFixed(1)} °C`
+          : `Status: ${frame.status || (isRunaway ? 'RUNAWAY' : 'NORMAL')}`;
+      }
+
+      if (isRunaway) {
         if (els.liveKpiStatus) {
           els.liveKpiStatus.textContent = 'RUNAWAY TRIP';
           els.liveKpiStatus.style.color = '#fb7185';
@@ -2007,26 +2215,185 @@
         }
       } else {
         if (els.liveKpiStatus) {
-          els.liveKpiStatus.textContent = 'NORMAL';
-          els.liveKpiStatus.style.color = '#34d399';
+          els.liveKpiStatus.textContent = frame.status === 'WARNING_HIGH_TEMP' ? 'HIGH TEMP' : 'NORMAL';
+          els.liveKpiStatus.style.color = frame.status === 'WARNING_HIGH_TEMP' ? '#fbbf24' : '#34d399';
         }
         if (els.liveKpiCardStatus) {
-          els.liveKpiCardStatus.style.borderLeftColor = '#10b981';
+          els.liveKpiCardStatus.style.borderLeftColor = frame.status === 'WARNING_HIGH_TEMP' ? '#f59e0b' : '#10b981';
         }
         if (els.cstrLiveBanner) {
           els.cstrLiveBanner.style.display = 'none';
         }
       }
 
-      cstrHistory.push(frame);
+      cstrHistory.push({
+        ...frame,
+        temperatureCelsius: tempC,
+        reactantConcentrationMolPerLiter: ca
+      });
       if (cstrHistory.length > MAX_CSTR_HISTORY) {
         cstrHistory.shift();
       }
       drawCstrLiveChart(cstrHistory);
     }
 
+    function drawSeriesParallelLiveChart(history) {
+      const canvas = els.cstrLiveCanvas;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      const padL = 54, padR = 56, padT = 28, padB = 30;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#080c14';
+      ctx.fillRect(0, 0, W, H);
+
+      const overlay = runawayOverlayProfile;
+      const nomSeries = overlay ? (overlay.nominalTrajectory || []) : (history || []);
+      const runSeries = overlay ? (overlay.runawayTrajectory || []) : [];
+      const nPts = Math.max(nomSeries.length, runSeries.length);
+
+      if (nPts === 0) return;
+
+      const allTemps = [
+        ...nomSeries.map(f => f.temperatureCelsius ?? 25),
+        ...nomSeries.map(f => f.jacketTemperatureCelsius ?? 20),
+        ...runSeries.map(f => f.temperatureCelsius ?? 25),
+        overlay ? overlay.maxSafeTemperatureCelsius : 146.85
+      ];
+      const tMin = Math.floor(Math.min(...allTemps, 15) / 10) * 10;
+      const tMax = Math.ceil(Math.max(...allTemps, 160) / 10) * 10;
+      const tSpan = Math.max(10, tMax - tMin);
+
+      const maxConc = overlay
+        ? 1.1
+        : Math.max(1.0, ...nomSeries.map(f => Math.max(f.caMolPerL || 0, f.cbMolPerL || 0, f.ccMolPerL || 0, f.cdMolPerL || 0)) * 1.1);
+
+      const xAt = (i, len) => padL + (len <= 1 ? 0 : (i / (len - 1)) * plotW);
+      const yT = (tempC) => padT + plotH - ((tempC - tMin) / tSpan) * plotH;
+      const yC = (conc) => padT + plotH - (Math.max(0, Math.min(maxConc, conc)) / maxConc) * plotH;
+
+      // Grid lines
+      ctx.strokeStyle = 'rgba(51, 65, 85, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.font = '11px monospace';
+      for (let k = 0; k <= 4; k++) {
+        const y = padT + (k / 4) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(W - padR, y);
+        ctx.stroke();
+
+        const tempTick = tMax - (k / 4) * tSpan;
+        ctx.fillStyle = '#94a3b8';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${tempTick.toFixed(0)}°C`, padL - 6, y + 4);
+
+        if (!overlay) {
+          const cTick = maxConc * (1 - k / 4);
+          ctx.textAlign = 'left';
+          ctx.fillText(`${cTick.toFixed(2)}M`, W - padR + 6, y + 4);
+        }
+      }
+
+      // Trip threshold line
+      const tripC = overlay ? overlay.maxSafeTemperatureCelsius : 146.85;
+      if (tripC >= tMin && tripC <= tMax) {
+        const yTrip = yT(tripC);
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = '#fb7185';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(padL, yTrip);
+        ctx.lineTo(W - padR, yTrip);
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = '#fda4af';
+        ctx.textAlign = 'right';
+        ctx.fillText(`Trip ${tripC.toFixed(1)}°C`, W - padR - 4, yTrip - 4);
+      }
+
+      const drawCurve = (series, valFn, yFn, color, width = 2, dashed = false) => {
+        if (!series || series.length === 0) return;
+        ctx.save();
+        if (dashed) ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        series.forEach((pt, idx) => {
+          const x = xAt(idx, series.length);
+          const y = yFn(valFn(pt));
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.restore();
+      };
+
+      if (overlay) {
+        drawCurve(nomSeries, f => f.jacketTemperatureCelsius, yT, '#06b6d4', 1.6, true);
+        drawCurve(nomSeries, f => f.temperatureCelsius, yT, '#34d399', 2.4, false);
+        drawCurve(runSeries, f => f.temperatureCelsius, yT, '#f43f5e', 2.6, false);
+
+        ctx.textAlign = 'left';
+        const items = [
+          ['Nominal T (°C)', '#34d399'],
+          ['Nominal Jacket Tj (°C)', '#06b6d4'],
+          ['Runaway T (°C)', '#f43f5e']
+        ];
+        let lx = padL;
+        items.forEach(([label, color]) => {
+          ctx.fillStyle = color;
+          ctx.fillRect(lx, 10, 12, 3);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillText(label, lx + 16, 15);
+          lx += ctx.measureText(label).width + 36;
+        });
+      } else {
+        drawCurve(nomSeries, f => f.caMolPerL || 0, yC, '#38bdf8', 1.8, false);
+        drawCurve(nomSeries, f => f.cbMolPerL || 0, yC, '#34d399', 1.8, false);
+        drawCurve(nomSeries, f => f.ccMolPerL || 0, yC, '#c084fc', 1.6, false);
+        drawCurve(nomSeries, f => f.cdMolPerL || 0, yC, '#f472b6', 1.6, false);
+        drawCurve(nomSeries, f => f.jacketTemperatureCelsius ?? 20, yT, '#06b6d4', 1.8, true);
+        drawCurve(nomSeries, f => f.temperatureCelsius ?? 25, yT, '#fbbf24', 2.4, false);
+
+        ctx.textAlign = 'left';
+        const items = [
+          ['T(°C)', '#fbbf24'],
+          ['Tj(°C)', '#06b6d4'],
+          ['Ca', '#38bdf8'],
+          ['Cb', '#34d399'],
+          ['Cc', '#c084fc'],
+          ['Cd', '#f472b6']
+        ];
+        let lx = padL;
+        items.forEach(([label, color]) => {
+          ctx.fillStyle = color;
+          ctx.fillRect(lx, 10, 10, 3);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillText(label, lx + 14, 15);
+          lx += ctx.measureText(label).width + 28;
+        });
+      }
+
+      const lastTime = nomSeries[nomSeries.length - 1]?.timeSeconds ?? 0;
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'left';
+      ctx.fillText('0 s', padL, H - 8);
+      ctx.textAlign = 'right';
+      ctx.fillText(`${lastTime.toFixed(1)} s`, W - padR, H - 8);
+    }
+
     function drawCstrLiveChart(history) {
       if (!els.cstrLiveCanvas) return;
+      if (runawayOverlayProfile || (history && history.length > 0 && history[0].cbMolPerL !== undefined)) {
+        drawSeriesParallelLiveChart(history);
+        return;
+      }
       const canvas = els.cstrLiveCanvas;
       const ctx = canvas.getContext('2d');
       const w = canvas.width;
@@ -2215,6 +2582,7 @@
       }
     });
 
+    if (els.btnLoadRunawayProfile) els.btnLoadRunawayProfile.addEventListener('click', loadRunawayProfile);
     if (els.btnStartCstrStream) els.btnStartCstrStream.addEventListener('click', startCstrStream);
     if (els.btnStopCstrStream) els.btnStopCstrStream.addEventListener('click', stopCstrStream);
 
@@ -2224,6 +2592,7 @@
     els.btnSimulateRecycle.addEventListener('click', runRecycleSimulation);
     if (els.btnSimulateShortcut) els.btnSimulateShortcut.addEventListener('click', runShortcutSimulation);
     els.btnSimulateDistillation.addEventListener('click', runDistillationSimulation);
+    if (els.btnSimulateSeriesParallelPlant) els.btnSimulateSeriesParallelPlant.addEventListener('click', runSeriesParallelPlantSimulation);
 
     if (els.btnDistillPlotBoth) els.btnDistillPlotBoth.addEventListener('click', () => setDistillPlotMode('both', els.btnDistillPlotBoth));
     if (els.btnDistillPlotTemp) els.btnDistillPlotTemp.addEventListener('click', () => setDistillPlotMode('temp', els.btnDistillPlotTemp));

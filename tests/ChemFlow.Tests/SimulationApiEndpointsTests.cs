@@ -296,6 +296,91 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.True(res.DistillateComposition["C6H6"] > 0.95);
         Assert.True(res.BottomsComposition["C7H8"] > 0.95);
     }
+
+    [Fact]
+    public async Task SeriesParallelPlant_Endpoint_ConvergesRecycleAndPersistsTopologyAndBalance()
+    {
+        var request = new SeriesParallelPlantSimulationRequest();
+
+        HttpResponseMessage response = await _client.PostAsJsonAsync("/api/simulations/series-parallel-plant", request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        SeriesParallelPlantSimulationResponse? sim = await response.Content.ReadFromJsonAsync<SeriesParallelPlantSimulationResponse>();
+        Assert.NotNull(sim);
+        Assert.True(sim.SavedSimulationRunId > 0);
+        Assert.True(sim.HasRecycle);
+        Assert.InRange(sim.RecycleIterations, 1, 35);
+        Assert.Contains("S-RECYCLE", sim.TearStreams!);
+        Assert.True(sim.IsMassConserved, $"Mass balance error: {sim.MassBalanceRelativeError:E3}");
+        Assert.True(sim.IsEnergyConserved, $"Energy balance error: {sim.EnergyBalanceRelativeError:E3}");
+        Assert.False(sim.IsThermalRunaway);
+        Assert.InRange(sim.SinglePassConversionAPercent, 15.0, 92.0);
+        Assert.True(sim.OverallPlantConversionAPercent > sim.SinglePassConversionAPercent);
+        Assert.True(sim.SelectivityBPercent > 0.0);
+        Assert.True(sim.YieldBPercent > 0.0);
+        Assert.True(sim.ProductBPurityMoleFraction > 0.70);
+        Assert.True(sim.PurifiedBenzeneFlowMolPerSec > 0.5);
+        Assert.True(sim.HeatGeneratedWatts > 0.0);
+
+        HttpResponseMessage dotResponse = await _client.GetAsync($"/api/simulations/{sim.SavedSimulationRunId}/topology?format=dot");
+        Assert.Equal(HttpStatusCode.OK, dotResponse.StatusCode);
+        string dot = await dotResponse.Content.ReadAsStringAsync();
+        Assert.Contains("R_101", dot);
+        Assert.Contains("C_101", dot);
+        Assert.Contains("C_102", dot);
+        Assert.Contains("SPL_101", dot);
+
+        HttpResponseMessage reportResponse = await _client.GetAsync($"/api/simulations/{sim.SavedSimulationRunId}/report");
+        Assert.Equal(HttpStatusCode.OK, reportResponse.StatusCode);
+        FlowsheetBalanceReport? report = await reportResponse.Content.ReadFromJsonAsync<FlowsheetBalanceReport>();
+        Assert.NotNull(report);
+        Assert.True(report.IsMassConserved);
+        Assert.True(report.IsEnergyConserved);
+    }
+
+    [Fact]
+    public async Task SeriesParallelTelemetryStep_Endpoint_ReturnsValidStateWithJacketHeating()
+    {
+        var request = new SeriesParallelStreamRequest(
+            FeedTemperatureKelvin: 325.0,
+            JacketInletTemperatureKelvin: 295.0,
+            CoolingUaWattsPerKelvin: 666.67,
+            MaxSafeTemperatureKelvin: 420.0,
+            TimeStepMinutes: 0.02,
+            MaxFrames: 40,
+            IntervalMs: 0);
+
+        HttpResponseMessage response = await _client.PostAsJsonAsync("/api/telemetry/cstr/series-parallel/step", request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        SeriesParallelTelemetryFrameDto? frame = await response.Content.ReadFromJsonAsync<SeriesParallelTelemetryFrameDto>();
+        Assert.NotNull(frame);
+        Assert.Equal(40, frame.FrameIndex);
+        Assert.InRange(frame.CaMolPerL, 0.0, 0.99);
+        Assert.True(frame.CbMolPerL > 0.0);
+        Assert.True(frame.JacketTemperatureKelvin > 295.0);
+        Assert.False(frame.IsThermalRunaway);
+        Assert.Equal("NORMAL", frame.Status);
+    }
+
+    [Fact]
+    public async Task SeriesParallelRunawayProfile_Endpoint_ComparesNominalAndRunawayTrajectories()
+    {
+        var request = new SeriesParallelRunawayProfileRequest();
+
+        HttpResponseMessage response = await _client.PostAsJsonAsync("/api/telemetry/cstr/series-parallel/profile", request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        SeriesParallelRunawayProfileResponse? profile = await response.Content.ReadFromJsonAsync<SeriesParallelRunawayProfileResponse>();
+        Assert.NotNull(profile);
+        Assert.False(profile.NominalHasRunaway);
+        Assert.True(profile.RunawayTriggered);
+        Assert.True(profile.RunawayPeakTemperatureCelsius > profile.NominalPeakTemperatureCelsius);
+        Assert.True(profile.RunawayPeakTemperatureCelsius > profile.MaxSafeTemperatureCelsius);
+        Assert.Equal(80, profile.NominalTrajectory.Count);
+        Assert.Equal(80, profile.RunawayTrajectory.Count);
+        Assert.Equal("CRITICAL_RUNAWAY", profile.RunawayTrajectory[^1].Status);
+    }
 }
 
 

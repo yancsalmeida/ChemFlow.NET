@@ -303,3 +303,119 @@ public sealed record CstrBatterySimulationResponse(
     double EnergyDutyKilowatts,
     IReadOnlyList<CstrBatteryReactorStateDto> ReactorStates
 );
+
+public sealed record SeriesParallelPlantSimulationRequest(
+    [property: DefaultValue(12.0)] double FreshFeedFlowMolPerSec = 12.0,
+    [property: DefaultValue(345.0)] double FreshFeedTemperatureKelvin = 345.0,
+    [property: DefaultValue(150.0)] double ColumnPressureKpa = 150.0,
+    [property: DefaultValue(110.0)] double ReactorVolumeLiters = 110.0,
+    [property: DefaultValue(4000.0)] double CoolingUaWattsPerKelvin = 4000.0,
+    [property: DefaultValue(345.0)] double JacketInletTemperatureKelvin = 345.0,
+    [property: DefaultValue(450.0)] double MaxSafeTemperatureKelvin = 450.0,
+    [property: DefaultValue(0.85)] double RecycleFraction = 0.85,
+    [property: DefaultValue(false)] bool UseHighExothermKinetics = false,
+    [property: DefaultValue("Raoult")] string? Model = "Raoult",
+    [property: DefaultValue("Wegstein")] string Method = "Wegstein",
+    [property: DefaultValue(1e-5)] double Tolerance = 1e-5
+);
+
+public sealed record SeriesParallelPlantSimulationResponse(
+    long SavedSimulationRunId,
+    string FlowsheetName,
+    string ThermodynamicModel,
+    IReadOnlyList<string> TopologicalExecutionOrder,
+    IReadOnlyList<UnitResultDto> Units,
+    IReadOnlyList<StreamStateDto> Streams,
+    bool IsMassConserved,
+    bool IsEnergyConserved,
+    double MassBalanceRelativeError,
+    double EnergyBalanceRelativeError,
+    string? TopologyUrl,
+    string? BalanceReportUrl,
+    bool HasRecycle,
+    int RecycleIterations,
+    IReadOnlyList<string>? TearStreams,
+    double SinglePassConversionAPercent,
+    double OverallPlantConversionAPercent,
+    double YieldBPercent,
+    double SelectivityBPercent,
+    double ReactorTemperatureKelvin,
+    double ReactorTemperatureCelsius,
+    double JacketOutletTemperatureKelvin,
+    double JacketOutletTemperatureCelsius,
+    double OutletCaMolPerL,
+    double OutletCbMolPerL,
+    double OutletCcMolPerL,
+    double OutletCdMolPerL,
+    double HeatGeneratedWatts,
+    double HeatRemovedWatts,
+    bool IsThermalRunaway,
+    bool IsUsingNativeCore,
+    double ProductBPurityMoleFraction,
+    double PurifiedBenzeneFlowMolPerSec
+);
+
+public sealed record SeriesParallelStreamRequest(
+    [property: DefaultValue(100.0)] double VolumetricFlowLPerMin = 100.0,
+    [property: DefaultValue(100.0)] double ReactorVolumeLiters = 100.0,
+    [property: DefaultValue(1.0)] double FeedCaMolPerL = 1.0,
+    [property: DefaultValue(0.0)] double FeedCbMolPerL = 0.0,
+    [property: DefaultValue(325.0)] double FeedTemperatureKelvin = 325.0,
+    [property: DefaultValue(295.0)] double JacketInletTemperatureKelvin = 295.0,
+    [property: DefaultValue(666.67)] double CoolingUaWattsPerKelvin = 666.67,
+    [property: DefaultValue(420.0)] double MaxSafeTemperatureKelvin = 420.0,
+    [property: DefaultValue(0.02)] double TimeStepMinutes = 0.02,
+    [property: DefaultValue(120)] int MaxFrames = 120,
+    [property: DefaultValue(150)] int IntervalMs = 150
+);
+
+public sealed record SeriesParallelTelemetryFrameDto(
+    int FrameIndex,
+    double TimeSeconds,
+    double CaMolPerL,
+    double CbMolPerL,
+    double CcMolPerL,
+    double CdMolPerL,
+    double TemperatureKelvin,
+    double TemperatureCelsius,
+    double JacketTemperatureKelvin,
+    double JacketTemperatureCelsius,
+    double ConversionAPct,
+    double YieldBPct,
+    double SelectivityBPct,
+    double RateR1MolPerLMin,
+    double RateR2MolPerLMin,
+    double RateR3MolPerLMin,
+    double HeatGeneratedWatts,
+    double HeatRemovedWatts,
+    bool IsThermalRunaway,
+    string Status,
+    string EngineMode
+);
+
+public sealed record SeriesParallelRunawayProfileRequest(
+    [property: DefaultValue(100.0)] double VolumetricFlowLPerMin = 100.0,
+    [property: DefaultValue(100.0)] double ReactorVolumeLiters = 100.0,
+    [property: DefaultValue(1.0)] double FeedCaMolPerL = 1.0,
+    [property: DefaultValue(325.0)] double NominalFeedTemperatureKelvin = 325.0,
+    [property: DefaultValue(666.67)] double NominalCoolingUaWattsPerKelvin = 666.67,
+    [property: DefaultValue(350.0)] double RunawayFeedTemperatureKelvin = 350.0,
+    [property: DefaultValue(60.0)] double RunawayCoolingUaWattsPerKelvin = 60.0,
+    [property: DefaultValue(295.0)] double JacketInletTemperatureKelvin = 295.0,
+    [property: DefaultValue(420.0)] double MaxSafeTemperatureKelvin = 420.0,
+    [property: DefaultValue(0.02)] double TimeStepMinutes = 0.02,
+    [property: DefaultValue(80)] int Steps = 80
+);
+
+public sealed record SeriesParallelRunawayProfileResponse(
+    string EngineMode,
+    double MaxSafeTemperatureKelvin,
+    double MaxSafeTemperatureCelsius,
+    double NominalPeakTemperatureCelsius,
+    bool NominalHasRunaway,
+    double RunawayPeakTemperatureCelsius,
+    bool RunawayTriggered,
+    IReadOnlyList<SeriesParallelTelemetryFrameDto> NominalTrajectory,
+    IReadOnlyList<SeriesParallelTelemetryFrameDto> RunawayTrajectory
+);
+

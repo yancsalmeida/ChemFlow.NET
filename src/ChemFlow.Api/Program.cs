@@ -1,5 +1,6 @@
 using ChemFlow.Api.Contracts;
 using ChemFlow.Api.Hubs;
+using ChemFlow.Api.Services;
 using ChemFlow.Domain.Data;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
@@ -626,6 +627,213 @@ app.MapPost("/api/simulations/shortcut-distillation", (
 .WithName("RunShortcutDistillation")
 .WithOpenApi();
 
+app.MapPost("/api/simulations/series-parallel-plant", (
+    SeriesParallelPlantSimulationRequest request,
+    ICompoundRepository compoundRepo,
+    ISimulationHistoryRepository historyRepo,
+    PengRobinsonThermodynamicPackage prPackage,
+    RaoultThermodynamicPackage raoultPackage) =>
+{
+    IThermodynamicPackage thermo = string.Equals(request.Model, "PengRobinson", StringComparison.OrdinalIgnoreCase)
+        ? prPackage
+        : raoultPackage;
+
+    ChemicalCompound pentane = compoundRepo.GetById("n-C5H12")
+        ?? throw new InvalidOperationException("Compound n-C5H12 not found.");
+    ChemicalCompound benzene = compoundRepo.GetById("C6H6")
+        ?? throw new InvalidOperationException("Compound C6H6 not found.");
+    ChemicalCompound toluene = compoundRepo.GetById("C7H8")
+        ?? throw new InvalidOperationException("Compound C7H8 not found.");
+    ChemicalCompound pXylene = compoundRepo.GetById("p-C8H10")
+        ?? throw new InvalidOperationException("Compound p-C8H10 not found.");
+
+    IReadOnlyList<ChemicalCompound> compounds = [pentane, benzene, toluene, pXylene];
+
+    double freshFlow = Math.Clamp(request.FreshFeedFlowMolPerSec, 1.0, 200.0);
+    double freshTempK = Math.Clamp(request.FreshFeedTemperatureKelvin, 280.0, 450.0);
+    double pressureKpa = Math.Clamp(request.ColumnPressureKpa, 50.0, 1000.0);
+    double recycleFrac = Math.Clamp(request.RecycleFraction, 0.05, 0.95);
+
+    var freshFeed = new MaterialStream(
+        "S-FEED",
+        "Fresh Pentane Feed",
+        compounds,
+        molarFlowRateMolPerSec: freshFlow,
+        temperatureKelvin: freshTempK,
+        pressureKpa: pressureKpa,
+        compositionZ: [0.97, 0.03, 0.0, 0.0]);
+
+    var recycleTear = new MaterialStream(
+        "S-RECYCLE",
+        "Reactant A Recycle",
+        compounds,
+        molarFlowRateMolPerSec: Math.Round(freshFlow * 0.25, 4),
+        temperatureKelvin: 330.0,
+        pressureKpa: pressureKpa,
+        compositionZ: [0.95, 0.05, 0.0, 0.0]);
+
+    var reactorFeed = new MaterialStream("S-RXN-IN", "Mixed Reactor Feed", compounds);
+    var reactorOut = new MaterialStream("S-RXN-OUT", "Reactor Effluent", compounds);
+    var distRecoverA = new MaterialStream("S-DIST-A", "Recovered Reactant Overhead", compounds);
+    var crudeProducts = new MaterialStream("S-CRUDE-PROD", "Crude Product Bottoms", compounds);
+    var productB = new MaterialStream("S-PROD-B", "Purified Benzene Product", compounds);
+    var heaviesOut = new MaterialStream("S-HEAVIES", "Heavy Byproducts C+D", compounds);
+    var purgeOut = new MaterialStream("S-PURGE", "Light Purge", compounds);
+
+    var mixer = new Mixer("MIX-101", "Feed-Recycle Mixer", [freshFeed, recycleTear], reactorFeed);
+
+    bool useHighExotherm = request.UseHighExothermKinetics;
+    var reactor = new SeriesParallelContinuousStirredTankReactor(
+        id: "R-101",
+        name: "Series-Parallel CSTR",
+        inletStream: reactorFeed,
+        outletStream: reactorOut,
+        reactantACompoundId: "n-C5H12",
+        productBCompoundId: "C6H6",
+        byproductCCompoundId: "C7H8",
+        byproductDCompoundId: "p-C8H10",
+        reactorVolumeLiters: Math.Clamp(request.ReactorVolumeLiters, 5.0, 5000.0),
+        rhoCpJPerLK: 2200.0,
+        k0_1PerMin: useHighExotherm ? null : 2.0e6,
+        ea1OverRKelvin: useHighExotherm ? null : 5000.0,
+        deltaH1JPerMol: useHighExotherm ? null : 8000.0,
+        k0_2PerMin: useHighExotherm ? null : 3.5e5,
+        ea2OverRKelvin: useHighExotherm ? null : 5200.0,
+        deltaH2JPerMol: useHighExotherm ? null : 6000.0,
+        k0_3PerMin: useHighExotherm ? null : 1.5e5,
+        ea3OverRKelvin: useHighExotherm ? null : 5400.0,
+        deltaH3JPerMol: useHighExotherm ? null : 7000.0,
+        coolingUaWattsPerKelvin: Math.Clamp(request.CoolingUaWattsPerKelvin, 0.0, 100000.0),
+        jacketInletTemperatureKelvin: Math.Clamp(request.JacketInletTemperatureKelvin, 250.0, 450.0),
+        maxSafeTemperatureKelvin: Math.Clamp(request.MaxSafeTemperatureKelvin, 350.0, 650.0));
+
+    var colRecoverA = new ShortcutDistillationColumn(
+        id: "C-101",
+        name: "Reactant A Recovery Column",
+        feedStream: reactorOut,
+        distillateOutlet: distRecoverA,
+        bottomsOutlet: crudeProducts,
+        lightKeyIndex: 0,
+        heavyKeyIndex: 1,
+        lightKeyRecoveryDistillate: 0.96,
+        heavyKeyRecoveryBottoms: 0.96,
+        refluxRatioMultiplier: 1.25,
+        columnPressureKpa: pressureKpa);
+
+    var colPurifyB = new ShortcutDistillationColumn(
+        id: "C-102",
+        name: "Benzene Product Column",
+        feedStream: crudeProducts,
+        distillateOutlet: productB,
+        bottomsOutlet: heaviesOut,
+        lightKeyIndex: 1,
+        heavyKeyIndex: 2,
+        lightKeyRecoveryDistillate: 0.96,
+        heavyKeyRecoveryBottoms: 0.96,
+        refluxRatioMultiplier: 1.25,
+        columnPressureKpa: pressureKpa);
+
+    var splitter = new Splitter(
+        id: "SPL-101",
+        name: "Recycle/Purge Splitter",
+        inletStream: distRecoverA,
+        outletStreams: [recycleTear, purgeOut],
+        splitFractions: [recycleFrac, 1.0 - recycleFrac]);
+
+    var flowsheet = new ProcessFlowsheet("Series-Parallel CSTR Recycle Plant", thermo);
+    flowsheet.AddUnit(mixer);
+    flowsheet.AddUnit(reactor);
+    flowsheet.AddUnit(colRecoverA);
+    flowsheet.AddUnit(colPurifyB);
+    flowsheet.AddUnit(splitter);
+
+    RecycleConvergenceMethod method = request.Method.Trim().ToUpperInvariant() switch
+    {
+        "DIRECT" or "DIRECTSUBSTITUTION" => RecycleConvergenceMethod.DirectSubstitution,
+        "BROYDEN" => RecycleConvergenceMethod.Broyden,
+        _ => RecycleConvergenceMethod.Wegstein
+    };
+
+    FlowsheetSolveResult solveResult = flowsheet.SolveWithRecycle(
+        new RecycleSolverOptions(
+            Method: method,
+            MaxIterations: 60,
+            Tolerance: Math.Clamp(request.Tolerance, 1e-8, 1e-2)));
+
+    FlowsheetBalanceReport balanceReport = flowsheet.GenerateBalanceReport();
+    long runId = historyRepo.SaveSimulationRun(flowsheet, solveResult.ExecutionOrder);
+
+    double freshA = freshFeed.GetComponentMolarFlowMolPerSec(0);
+    double exitA = purgeOut.GetComponentMolarFlowMolPerSec(0)
+                 + productB.GetComponentMolarFlowMolPerSec(0)
+                 + heaviesOut.GetComponentMolarFlowMolPerSec(0);
+    double overallConvA = freshA > 1e-12 ? Math.Clamp((freshA - exitA) / freshA * 100.0, 0.0, 100.0) : 0.0;
+
+    var unitDtos = solveResult.ExecutionOrder
+        .Select(u => new UnitResultDto(u.Id, u.Name, u.UnitType, Math.Round(u.EnergyDutyWatts / 1000.0, 3)))
+        .ToList();
+
+    var streamDtos = flowsheet.Streams
+        .Select(s =>
+        {
+            var fractions = new Dictionary<string, double>();
+            for (int i = 0; i < s.Compounds.Count; i++)
+                fractions[s.Compounds[i].Id] = Math.Round(s.CompositionZ[i], 4);
+
+            return new StreamStateDto(
+                s.Id,
+                s.Name,
+                s.Phase.ToString(),
+                Math.Round(s.MolarFlowRateMolPerSec, 4),
+                Math.Round(s.TemperatureKelvin, 2),
+                Math.Round(s.TemperatureKelvin - 273.15, 2),
+                Math.Round(s.PressureKpa, 2),
+                Math.Round(s.VaporFractionBeta, 4),
+                Math.Round(s.MolarEnthalpyJPerMol, 2),
+                Math.Round(s.TotalEnthalpyFlowWatts / 1000.0, 3),
+                fractions);
+        })
+        .ToList();
+
+    return Results.Ok(new SeriesParallelPlantSimulationResponse(
+        SavedSimulationRunId: runId,
+        FlowsheetName: flowsheet.Name,
+        ThermodynamicModel: thermo.Name,
+        TopologicalExecutionOrder: solveResult.ExecutionOrder.Select(u => u.Id).ToList(),
+        Units: unitDtos,
+        Streams: streamDtos,
+        IsMassConserved: balanceReport.IsMassConserved,
+        IsEnergyConserved: balanceReport.IsEnergyConserved,
+        MassBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeMassError, 8),
+        EnergyBalanceRelativeError: Math.Round(balanceReport.GlobalBalance.RelativeEnthalpyError, 8),
+        TopologyUrl: $"/api/simulations/{runId}/topology",
+        BalanceReportUrl: $"/api/simulations/{runId}/report",
+        HasRecycle: solveResult.HasRecycle,
+        RecycleIterations: solveResult.Iterations,
+        TearStreams: solveResult.TearStreamIds,
+        SinglePassConversionAPercent: Math.Round(reactor.ConversionAPercent, 2),
+        OverallPlantConversionAPercent: Math.Round(overallConvA, 2),
+        YieldBPercent: Math.Round(reactor.YieldBPercent, 2),
+        SelectivityBPercent: Math.Round(reactor.SelectivityBPercent, 2),
+        ReactorTemperatureKelvin: Math.Round(reactor.OutletTemperatureKelvin, 2),
+        ReactorTemperatureCelsius: Math.Round(reactor.OutletTemperatureKelvin - 273.15, 2),
+        JacketOutletTemperatureKelvin: Math.Round(reactor.JacketOutletTemperatureKelvin, 2),
+        JacketOutletTemperatureCelsius: Math.Round(reactor.JacketOutletTemperatureKelvin - 273.15, 2),
+        OutletCaMolPerL: Math.Round(reactor.OutletCaMolPerL, 4),
+        OutletCbMolPerL: Math.Round(reactor.OutletCbMolPerL, 4),
+        OutletCcMolPerL: Math.Round(reactor.OutletCcMolPerL, 4),
+        OutletCdMolPerL: Math.Round(reactor.OutletCdMolPerL, 4),
+        HeatGeneratedWatts: Math.Round(reactor.HeatGeneratedWatts, 1),
+        HeatRemovedWatts: Math.Round(reactor.HeatRemovedWatts, 1),
+        IsThermalRunaway: reactor.IsThermalRunaway,
+        IsUsingNativeCore: reactor.IsUsingNativeCore,
+        ProductBPurityMoleFraction: Math.Round(productB.CompositionZ[1], 4),
+        PurifiedBenzeneFlowMolPerSec: Math.Round(productB.GetComponentMolarFlowMolPerSec(1), 4)
+    ));
+})
+.WithName("RunSeriesParallelPlant")
+.WithOpenApi();
+
 app.MapGet("/api/simulations", (ISimulationHistoryRepository historyRepo) =>
     Results.Ok(historyRepo.GetRecentRuns(20)))
 .WithName("GetRecentSimulations")
@@ -855,6 +1063,62 @@ app.MapPost("/api/telemetry/cstr/battery", (
     ));
 })
 .WithName("SimulateCstrBattery")
+.WithOpenApi();
+
+app.MapPost("/api/telemetry/cstr/series-parallel/step", (SeriesParallelStreamRequest request) =>
+{
+    int steps = Math.Clamp(request.MaxFrames, 1, 1000);
+    List<SeriesParallelTelemetryFrameDto> frames = SeriesParallelTelemetryHelper.SimulateTrajectory(request, steps);
+    return Results.Ok(frames[^1]);
+})
+.WithName("StepSeriesParallelCstrTelemetry")
+.WithOpenApi();
+
+app.MapPost("/api/telemetry/cstr/series-parallel/profile", (SeriesParallelRunawayProfileRequest request) =>
+{
+    int steps = Math.Clamp(request.Steps, 10, 1000);
+    double safeTempK = Math.Max(300.0, request.MaxSafeTemperatureKelvin);
+
+    var nominalRequest = new SeriesParallelStreamRequest(
+        VolumetricFlowLPerMin: request.VolumetricFlowLPerMin,
+        ReactorVolumeLiters: request.ReactorVolumeLiters,
+        FeedCaMolPerL: request.FeedCaMolPerL,
+        FeedCbMolPerL: 0.0,
+        FeedTemperatureKelvin: request.NominalFeedTemperatureKelvin,
+        JacketInletTemperatureKelvin: request.JacketInletTemperatureKelvin,
+        CoolingUaWattsPerKelvin: request.NominalCoolingUaWattsPerKelvin,
+        MaxSafeTemperatureKelvin: safeTempK,
+        TimeStepMinutes: request.TimeStepMinutes,
+        MaxFrames: steps,
+        IntervalMs: 0);
+
+    var runawayRequest = nominalRequest with
+    {
+        FeedTemperatureKelvin = request.RunawayFeedTemperatureKelvin,
+        CoolingUaWattsPerKelvin = request.RunawayCoolingUaWattsPerKelvin
+    };
+
+    List<SeriesParallelTelemetryFrameDto> nominalTrajectory = SeriesParallelTelemetryHelper.SimulateTrajectory(nominalRequest, steps);
+    List<SeriesParallelTelemetryFrameDto> runawayTrajectory = SeriesParallelTelemetryHelper.SimulateTrajectory(runawayRequest, steps);
+
+    double nominalPeakC = nominalTrajectory.Max(f => f.TemperatureCelsius);
+    bool nominalHasRunaway = nominalTrajectory.Any(f => f.IsThermalRunaway);
+    double runawayPeakC = runawayTrajectory.Max(f => f.TemperatureCelsius);
+    bool runawayTriggered = runawayTrajectory.Any(f => f.IsThermalRunaway);
+
+    return Results.Ok(new SeriesParallelRunawayProfileResponse(
+        EngineMode: SeriesParallelTelemetryHelper.GetEngineModeLabel(),
+        MaxSafeTemperatureKelvin: Math.Round(safeTempK, 2),
+        MaxSafeTemperatureCelsius: Math.Round(safeTempK - 273.15, 2),
+        NominalPeakTemperatureCelsius: Math.Round(nominalPeakC, 2),
+        NominalHasRunaway: nominalHasRunaway,
+        RunawayPeakTemperatureCelsius: Math.Round(runawayPeakC, 2),
+        RunawayTriggered: runawayTriggered,
+        NominalTrajectory: nominalTrajectory,
+        RunawayTrajectory: runawayTrajectory
+    ));
+})
+.WithName("ProfileSeriesParallelRunaway")
 .WithOpenApi();
 
 app.Run();

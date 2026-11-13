@@ -129,4 +129,56 @@ public class SimulationTelemetryHubTests : IClassFixture<WebApplicationFactory<P
         // Verify that residual generally decreases and final maxRelDeltaT meets tolerance
         Assert.True(progressList.Last().RelativeError <= 1e-4 || progressList.Last().MaxDeltaT <= 0.01);
     }
+
+    [Fact]
+    public async Task Hub_StreamSeriesParallelCstrSimulation_YieldsNominalSelectiveAndRunawayTrajectories()
+    {
+        var hub = new SimulationTelemetryHub(_compoundRepo, _prThermo, _prThermo, _raoultThermo);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var nominalReq = new SeriesParallelStreamRequest(
+            VolumetricFlowLPerMin: 100.0,
+            ReactorVolumeLiters: 100.0,
+            FeedCaMolPerL: 1.0,
+            FeedCbMolPerL: 0.0,
+            FeedTemperatureKelvin: 325.0,
+            JacketInletTemperatureKelvin: 295.0,
+            CoolingUaWattsPerKelvin: 666.67,
+            MaxSafeTemperatureKelvin: 420.0,
+            TimeStepMinutes: 0.02,
+            MaxFrames: 15,
+            IntervalMs: 1);
+
+        var nominalFrames = new List<SeriesParallelTelemetryFrameDto>();
+        await foreach (SeriesParallelTelemetryFrameDto frame in hub.StreamSeriesParallelCstrSimulation(nominalReq, cts.Token))
+        {
+            nominalFrames.Add(frame);
+        }
+
+        Assert.Equal(15, nominalFrames.Count);
+        for (int i = 1; i < nominalFrames.Count; i++)
+        {
+            Assert.True(nominalFrames[i].TimeSeconds > nominalFrames[i - 1].TimeSeconds);
+        }
+        Assert.True(nominalFrames[^1].CbMolPerL > 0.0);
+        Assert.True(nominalFrames[^1].JacketTemperatureKelvin > nominalReq.JacketInletTemperatureKelvin);
+        Assert.False(nominalFrames[^1].IsThermalRunaway);
+        Assert.Equal("NORMAL", nominalFrames[^1].Status);
+
+        var runawayReq = nominalReq with
+        {
+            FeedTemperatureKelvin = 355.0,
+            CoolingUaWattsPerKelvin = 40.0,
+            MaxFrames = 50
+        };
+
+        var runawayFrames = new List<SeriesParallelTelemetryFrameDto>();
+        await foreach (SeriesParallelTelemetryFrameDto frame in hub.StreamSeriesParallelCstrSimulation(runawayReq, cts.Token))
+        {
+            runawayFrames.Add(frame);
+        }
+
+        Assert.NotEmpty(runawayFrames);
+        Assert.Contains(runawayFrames, f => f.IsThermalRunaway && f.Status == "CRITICAL_RUNAWAY");
+    }
 }

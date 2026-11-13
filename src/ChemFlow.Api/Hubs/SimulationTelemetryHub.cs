@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using ChemFlow.Api.Contracts;
+using ChemFlow.Api.Services;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
 using ChemFlow.Domain.Native;
@@ -65,9 +66,7 @@ public sealed class SimulationTelemetryHub : Hub
         int maxFrames = Math.Clamp(request.MaxFrames, 1, 1000);
         double maxSafeTemp = 400.0; // 126.85 °C
 
-        string engineMode = NativeReactorCoreInterop.IsNativeAvailable
-            ? $"Native C11 ({NativeReactorCoreInterop.VersionString})"
-            : "Managed C# RK4";
+        string engineMode = SeriesParallelTelemetryHelper.GetEngineModeLabel();
 
         for (int frame = 1; frame <= maxFrames && !cancellationToken.IsCancellationRequested; frame++)
         {
@@ -90,6 +89,52 @@ public sealed class SimulationTelemetryHub : Hub
                 Status: status,
                 EngineMode: engineMode
             );
+
+            try
+            {
+                await Task.Delay(intervalMs, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                yield break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Real-time streaming generator yielding dynamic series-parallel CSTR telemetry
+    /// (A -> B -> C, A -> D) coupled with a dynamic cooling jacket energy balance (Tj).
+    /// </summary>
+    public async IAsyncEnumerable<SeriesParallelTelemetryFrameDto> StreamSeriesParallelCstrSimulation(
+        SeriesParallelStreamRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        CstrSeriesParallelParamsFFI p = SeriesParallelTelemetryHelper.BuildParameters(request);
+        double dtMin = Math.Clamp(request.TimeStepMinutes, 0.001, 0.25);
+        int intervalMs = Math.Clamp(request.IntervalMs, 10, 1000);
+        int maxFrames = Math.Clamp(request.MaxFrames, 1, 1000);
+        double maxSafeTempK = Math.Max(300.0, request.MaxSafeTemperatureKelvin);
+
+        double ca = p.CaFeedMolPerL;
+        double cb = p.CbFeedMolPerL;
+        double cc = 0.0;
+        double cd = 0.0;
+        double tempK = p.TFeedKelvin;
+        double tempJK = p.JacketTInKelvin;
+        string engineMode = SeriesParallelTelemetryHelper.GetEngineModeLabel();
+
+        for (int frame = 1; frame <= maxFrames && !cancellationToken.IsCancellationRequested; frame++)
+        {
+            int subSteps = tempK > 430.0 ? 8 : 2;
+            double subDt = dtMin / subSteps;
+            CstrSeriesParallelStateFFI state = default;
+            for (int s = 0; s < subSteps; s++)
+            {
+                NativeReactorCoreInterop.StepSeriesParallelDetailed(
+                    in p, ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK, subDt, maxSafeTempK, out state);
+            }
+
+            yield return SeriesParallelTelemetryHelper.MapStateToFrame(frame, frame * dtMin, maxSafeTempK, in state, engineMode);
 
             try
             {
