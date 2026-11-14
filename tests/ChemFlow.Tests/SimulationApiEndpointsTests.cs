@@ -381,6 +381,59 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.Equal(80, profile.RunawayTrajectory.Count);
         Assert.Equal("CRITICAL_RUNAWAY", profile.RunawayTrajectory[^1].Status);
     }
+
+    [Fact]
+    public async Task SeriesParallelClosedLoop_Endpoint_PreventsRunawayAndReturnsEkfMetrics()
+    {
+        var request = new SeriesParallelClosedLoopRequest();
+
+        HttpResponseMessage response = await _client.PostAsJsonAsync(
+            "/api/telemetry/cstr/series-parallel/closed-loop", request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        SeriesParallelClosedLoopResponse? payload =
+            await response.Content.ReadFromJsonAsync<SeriesParallelClosedLoopResponse>();
+        Assert.NotNull(payload);
+        Assert.Equal(80, payload.Trajectory.Count);
+        Assert.True(payload.OpenLoopRunawayTriggered);
+        Assert.False(payload.ClosedLoopRunawayTriggered);
+        Assert.True(payload.ClosedLoopPeakTempC < payload.MaxSafeTempC);
+        Assert.True(payload.ClosedLoopFinalCbMolPerL > payload.OpenLoopFinalCbMolPerL);
+        Assert.True(payload.EkfMeanCbRmseMolPerL < 0.04);
+        Assert.Equal(0, payload.FaultCount);
+    }
+
+    [Fact]
+    public async Task SeriesParallelClosedLoop_Endpoint_SupportsEmptyBodyCustomTuningAndUiMarkup()
+    {
+        HttpResponseMessage emptyRes = await _client.PostAsync("/api/telemetry/cstr/series-parallel/closed-loop", content: null);
+        Assert.Equal(HttpStatusCode.OK, emptyRes.StatusCode);
+
+        var customReq = new SeriesParallelClosedLoopRequest(
+            TotalSteps: 45,
+            SampleTimeMin: 0.05,
+            InitialValvePct: 15.0,
+            DisturbanceStep: 8,
+            MaxSafeTempC: 118.0,
+            WeightCbEconomic: 95.0,
+            TargetCbMolPerL: 0.24,
+            MaxSlewPerStepPct: 30.0);
+
+        HttpResponseMessage customRes = await _client.PostAsJsonAsync(
+            "/api/telemetry/cstr/series-parallel/closed-loop", customReq);
+        Assert.Equal(HttpStatusCode.OK, customRes.StatusCode);
+
+        SeriesParallelClosedLoopResponse? payload =
+            await customRes.Content.ReadFromJsonAsync<SeriesParallelClosedLoopResponse>();
+        Assert.NotNull(payload);
+        Assert.Equal(45, payload.Trajectory.Count);
+        Assert.Equal(118.0, payload.MaxSafeTempC);
+        Assert.False(payload.ClosedLoopRunawayTriggered);
+
+        string html = await _client.GetStringAsync("/");
+        Assert.Contains("btnLoadClosedLoopComparison", html);
+        Assert.Contains("inpNmpcWeightCb", html);
+    }
 }
 
 

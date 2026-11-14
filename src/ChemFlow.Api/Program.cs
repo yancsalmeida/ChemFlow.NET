@@ -1,6 +1,7 @@
 using ChemFlow.Api.Contracts;
 using ChemFlow.Api.Hubs;
 using ChemFlow.Api.Services;
+using ChemFlow.Domain.Control;
 using ChemFlow.Domain.Data;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
@@ -1119,6 +1120,87 @@ app.MapPost("/api/telemetry/cstr/series-parallel/profile", (SeriesParallelRunawa
     ));
 })
 .WithName("ProfileSeriesParallelRunaway")
+.WithOpenApi();
+
+app.MapPost("/api/telemetry/cstr/series-parallel/closed-loop", (SeriesParallelClosedLoopRequest? request) =>
+{
+    var req = request ?? new SeriesParallelClosedLoopRequest();
+    double maxSafeTempK = Math.Max(310.0, req.MaxSafeTempC + SeriesParallelActuatorModel.KelvinOffset);
+
+    var nmpcCfg = new SpNmpcConfig(
+        SampleTimeMin: Math.Clamp(req.SampleTimeMin, 0.005, 1.0),
+        WeightCbEconomic: Math.Clamp(req.WeightCbEconomic, 0.0, 500.0),
+        WeightByproduct: Math.Clamp(req.WeightByproduct, 0.0, 200.0),
+        MaxSafeTempK: maxSafeTempK,
+        TargetCbMolPerL: req.TargetCbMolPerL is double tgt ? Math.Clamp(tgt, 0.0, 2.0) : null,
+        MaxSlewPerStepPct: Math.Clamp(req.MaxSlewPerStepPct, 2.0, 100.0)
+    );
+
+    var scenario = new SpClosedLoopScenario(
+        TotalSteps: Math.Clamp(req.TotalSteps, 5, 600),
+        SampleTimeMin: Math.Clamp(req.SampleTimeMin, 0.005, 1.0),
+        InitialValvePct: Math.Clamp(req.InitialValvePct, 0.0, 100.0),
+        NominalFeedTempC: Math.Clamp(req.NominalFeedTempC, 5.0, 150.0),
+        DisturbanceFeedTempC: Math.Clamp(req.DisturbanceFeedTempC, 5.0, 200.0),
+        DisturbanceStep: Math.Clamp(req.DisturbanceStep, 0, 599),
+        CaFeedMolPerL: Math.Clamp(req.CaFeedMolPerL, 0.1, 5.0),
+        JacketTInC: Math.Clamp(req.JacketTInC, -10.0, 100.0),
+        NmpcConfig: nmpcCfg
+    );
+
+    SpClosedLoopComparisonResult result = SeriesParallelClosedLoopSimulator.RunComparison(scenario);
+
+    var trajectoryDto = result.Trajectory.Select(pt => new SeriesParallelClosedLoopPointDto(
+        Step: pt.Step,
+        TimeMin: pt.TimeMin,
+        FeedTempC: pt.FeedTempC,
+        OpenLoopTempC: pt.OpenLoopTempC,
+        OpenLoopJacketTempC: pt.OpenLoopJacketTempC,
+        OpenLoopCaMolPerL: pt.OpenLoopCaMolPerL,
+        OpenLoopCbMolPerL: pt.OpenLoopCbMolPerL,
+        OpenLoopSelectivityBPct: pt.OpenLoopSelectivityBPct,
+        OpenLoopValvePct: pt.OpenLoopValvePct,
+        OpenLoopRunaway: pt.OpenLoopRunaway,
+        ClosedLoopTempC: pt.ClosedLoopTempC,
+        ClosedLoopJacketTempC: pt.ClosedLoopJacketTempC,
+        ClosedLoopCaMolPerL: pt.ClosedLoopCaMolPerL,
+        ClosedLoopCbMolPerL: pt.ClosedLoopCbMolPerL,
+        ClosedLoopCcMolPerL: pt.ClosedLoopCcMolPerL,
+        ClosedLoopCdMolPerL: pt.ClosedLoopCdMolPerL,
+        ClosedLoopConversionAPct: pt.ClosedLoopConversionAPct,
+        ClosedLoopYieldBPct: pt.ClosedLoopYieldBPct,
+        ClosedLoopSelectivityBPct: pt.ClosedLoopSelectivityBPct,
+        ClosedLoopValvePct: pt.ClosedLoopValvePct,
+        ClosedLoopRunaway: pt.ClosedLoopRunaway,
+        EkfCaMolPerL: pt.EkfCaMolPerL,
+        EkfCbMolPerL: pt.EkfCbMolPerL,
+        EkfTempC: pt.EkfTempC,
+        EkfJacketTempC: pt.EkfJacketTempC,
+        Nis: pt.Nis,
+        SensorFaultDetected: pt.SensorFaultDetected,
+        NmpcObjectiveCost: pt.NmpcObjectiveCost
+    )).ToArray();
+
+    return Results.Ok(new SeriesParallelClosedLoopResponse(
+        EngineMode: result.EngineMode,
+        MaxSafeTempC: result.MaxSafeTempC,
+        OpenLoopPeakTempC: result.OpenLoopPeakTempC,
+        OpenLoopFinalCbMolPerL: result.OpenLoopFinalCbMolPerL,
+        OpenLoopFinalSelectivityBPct: result.OpenLoopFinalSelectivityBPct,
+        OpenLoopRunawayTriggered: result.OpenLoopRunawayTriggered,
+        ClosedLoopPeakTempC: result.ClosedLoopPeakTempC,
+        ClosedLoopFinalCbMolPerL: result.ClosedLoopFinalCbMolPerL,
+        ClosedLoopMeanCbMolPerL: result.ClosedLoopMeanCbMolPerL,
+        ClosedLoopFinalSelectivityBPct: result.ClosedLoopFinalSelectivityBPct,
+        ClosedLoopRunawayTriggered: result.ClosedLoopRunawayTriggered,
+        EkfFinalCbAbsErrorMolPerL: result.EkfFinalCbAbsErrorMolPerL,
+        EkfMeanCbRmseMolPerL: result.EkfMeanCbRmseMolPerL,
+        MaxNis: result.MaxNis,
+        FaultCount: result.FaultCount,
+        Trajectory: trajectoryDto
+    ));
+})
+.WithName("RunSeriesParallelClosedLoopComparison")
 .WithOpenApi();
 
 app.Run();

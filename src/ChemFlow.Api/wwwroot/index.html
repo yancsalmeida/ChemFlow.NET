@@ -688,6 +688,9 @@
             <button class="btn-secondary" id="btnLoadRunawayProfile" style="border-color: #f43f5e; color: #fda4af; background: rgba(244, 63, 94, 0.12); padding: 0.35rem 0.75rem; font-size: 0.78rem;">
               Compare Nominal vs Runaway
             </button>
+            <button class="btn-secondary" id="btnLoadClosedLoopComparison" style="border-color: #10b981; color: #6ee7b7; background: rgba(16, 185, 129, 0.14); padding: 0.35rem 0.75rem; font-size: 0.78rem;">
+              EKF6 + Economic NMPC
+            </button>
             <button class="btn-primary" id="btnStartCstrStream" style="background: #0891b2; border-color: #06b6d4; padding: 0.35rem 0.85rem; font-size: 0.82rem;">
               &#9654; Start Live Stream
             </button>
@@ -760,6 +763,30 @@
           <div class="control-group" style="margin-bottom: 0;">
             <label style="font-size: 0.76rem;">Feed Temp T0 <span class="val" id="lblLiveT0">350.0 K (76.9 °C)</span></label>
             <input type="range" id="inpLiveT0" min="300" max="380" step="1" value="350" />
+          </div>
+        </div>
+
+        <!-- Closed-Loop 6-State EKF + Economic NMPC Tuning Sliders -->
+        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.85rem; margin-top: 0.65rem; background: rgba(16, 185, 129, 0.06); padding: 0.65rem 0.75rem; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.25);">
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.74rem;">NMPC Weight W_Cb <span class="val" id="lblNmpcWeightCb">60</span></label>
+            <input type="range" id="inpNmpcWeightCb" min="10" max="150" step="5" value="60" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.74rem;">Max Safe Temp <span class="val" id="lblNmpcMaxTempC">126.9 °C</span></label>
+            <input type="range" id="inpNmpcMaxTempC" min="105" max="150" step="0.5" value="126.85" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.74rem;">Initial Valve u0 <span class="val" id="lblNmpcInitValve">15%</span></label>
+            <input type="range" id="inpNmpcInitValve" min="5" max="50" step="1" value="15" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.74rem;">Target Cb (0=Econ) <span class="val" id="lblNmpcTargetCb">Economic Max</span></label>
+            <input type="range" id="inpNmpcTargetCb" min="0" max="0.50" step="0.02" value="0" />
+          </div>
+          <div class="control-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.74rem;">Disturbance Step <span class="val" id="lblNmpcDistStep">step 12 (0.6m)</span></label>
+            <input type="range" id="inpNmpcDistStep" min="5" max="30" step="1" value="12" />
           </div>
         </div>
       </div>
@@ -1048,6 +1075,18 @@
       lblLiveT0: document.getElementById('lblLiveT0'),
       selCstrStreamMode: document.getElementById('selCstrStreamMode'),
       btnLoadRunawayProfile: document.getElementById('btnLoadRunawayProfile'),
+      btnLoadClosedLoopComparison: document.getElementById('btnLoadClosedLoopComparison'),
+      inpNmpcWeightCb: document.getElementById('inpNmpcWeightCb'),
+      lblNmpcWeightCb: document.getElementById('lblNmpcWeightCb'),
+      inpNmpcMaxTempC: document.getElementById('inpNmpcMaxTempC'),
+      lblNmpcMaxTempC: document.getElementById('lblNmpcMaxTempC'),
+      inpNmpcInitValve: document.getElementById('inpNmpcInitValve'),
+      lblNmpcInitValve: document.getElementById('lblNmpcInitValve'),
+      inpNmpcTargetCb: document.getElementById('inpNmpcTargetCb'),
+      lblNmpcTargetCb: document.getElementById('lblNmpcTargetCb'),
+      inpNmpcDistStep: document.getElementById('inpNmpcDistStep'),
+      lblNmpcDistStep: document.getElementById('lblNmpcDistStep'),
+      liveKpiTrip: document.getElementById('liveKpiTrip'),
       liveSeriesParallelStrip: document.getElementById('liveSeriesParallelStrip'),
       liveKpiSpecies: document.getElementById('liveKpiSpecies'),
       liveKpiSelectivity: document.getElementById('liveKpiSelectivity'),
@@ -1148,6 +1187,23 @@
       if (els.inpLiveT0 && els.lblLiveT0) {
         const t0 = parseFloat(els.inpLiveT0.value);
         els.lblLiveT0.textContent = `${t0.toFixed(1)} K (${(t0 - 273.15).toFixed(1)} °C)`;
+      }
+      if (els.inpNmpcWeightCb && els.lblNmpcWeightCb) {
+        els.lblNmpcWeightCb.textContent = `${parseFloat(els.inpNmpcWeightCb.value).toFixed(0)}`;
+      }
+      if (els.inpNmpcMaxTempC && els.lblNmpcMaxTempC) {
+        els.lblNmpcMaxTempC.textContent = `${parseFloat(els.inpNmpcMaxTempC.value).toFixed(1)} °C`;
+      }
+      if (els.inpNmpcInitValve && els.lblNmpcInitValve) {
+        els.lblNmpcInitValve.textContent = `${parseFloat(els.inpNmpcInitValve.value).toFixed(0)}%`;
+      }
+      if (els.inpNmpcTargetCb && els.lblNmpcTargetCb) {
+        const tgt = parseFloat(els.inpNmpcTargetCb.value);
+        els.lblNmpcTargetCb.textContent = tgt <= 0.001 ? 'Economic Max' : `${tgt.toFixed(2)} mol/L`;
+      }
+      if (els.inpNmpcDistStep && els.lblNmpcDistStep) {
+        const step = parseInt(els.inpNmpcDistStep.value, 10);
+        els.lblNmpcDistStep.textContent = `step ${step} (${(step * 0.05).toFixed(2)}m)`;
       }
     }
 
@@ -2038,6 +2094,7 @@
 
       const mode = els.selCstrStreamMode ? els.selCstrStreamMode.value : 'series-parallel';
       runawayOverlayProfile = null;
+      closedLoopOverlayResult = null;
       cstrHistory = [];
       drawCstrLiveChart(cstrHistory);
 
@@ -2129,6 +2186,7 @@
         if (!res.ok) throw new Error(profile?.detail || 'Profile failed');
 
         runawayOverlayProfile = profile;
+        closedLoopOverlayResult = null;
         cstrHistory = (profile.nominalTrajectory || []).map(f => ({
           ...f,
           reactantConcentrationMolPerLiter: f.caMolPerL
@@ -2165,6 +2223,91 @@
     }
 
     let runawayOverlayProfile = null;
+    let closedLoopOverlayResult = null;
+
+    async function runClosedLoopControlComparison() {
+      stopCstrStream();
+      const weightCb = parseFloat(els.inpNmpcWeightCb?.value || '60.0');
+      const maxSafeTempC = parseFloat(els.inpNmpcMaxTempC?.value || '126.85');
+      const initValve = parseFloat(els.inpNmpcInitValve?.value || '15.0');
+      const tgtCbRaw = parseFloat(els.inpNmpcTargetCb?.value || '0.0');
+      const distStep = parseInt(els.inpNmpcDistStep?.value || '12', 10);
+      const ca0 = parseFloat(els.inpLiveCa0?.value || '1.0');
+      const tcK = parseFloat(els.inpLiveTc?.value || '295.0');
+      const t0K = parseFloat(els.inpLiveT0?.value || '350.0');
+
+      const payload = {
+        totalSteps: 80,
+        sampleTimeMin: 0.05,
+        initialValvePct: initValve,
+        nominalFeedTempC: 51.85,
+        disturbanceFeedTempC: Math.max(60.0, t0K - 273.15),
+        disturbanceStep: distStep,
+        caFeedMolPerL: ca0,
+        jacketTInC: Math.min(35.0, tcK - 273.15),
+        maxSafeTempC: maxSafeTempC,
+        weightCbEconomic: weightCb,
+        weightByproduct: 10.0,
+        targetCbMolPerL: tgtCbRaw > 0.001 ? tgtCbRaw : null,
+        maxSlewPerStepPct: 35.0
+      };
+
+      try {
+        const res = await fetch('/api/telemetry/cstr/series-parallel/closed-loop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.detail || 'Closed-loop simulation failed');
+
+        runawayOverlayProfile = null;
+        closedLoopOverlayResult = data;
+        const traj = data.trajectory || [];
+        const last = traj[traj.length - 1];
+
+        if (els.telemetryEngineBadge && data.engineMode) {
+          els.telemetryEngineBadge.textContent = `Engine: ${data.engineMode} | EKF6 + e-NMPC`;
+        }
+
+        if (last) {
+          if (els.liveKpiTemp) els.liveKpiTemp.textContent = `${last.closedLoopTempC.toFixed(1)} °C`;
+          if (els.liveKpiTempK) els.liveKpiTempK.textContent = `${(last.closedLoopTempC + 273.15).toFixed(2)} K`;
+          if (els.liveKpiCa) els.liveKpiCa.textContent = `${last.closedLoopCaMolPerL.toFixed(3)} mol/L`;
+          if (els.liveKpiCaFeed) els.liveKpiCaFeed.textContent = `Cb: ${last.closedLoopCbMolPerL.toFixed(3)} M (EKF ${last.ekfCbMolPerL.toFixed(3)})`;
+          if (els.liveKpiConv) els.liveKpiConv.textContent = `${last.closedLoopConversionAPct.toFixed(1)} %`;
+          if (els.liveKpiRate) els.liveKpiRate.textContent = `u: ${last.closedLoopValvePct.toFixed(1)}%`;
+          if (els.liveKpiDuty) els.liveKpiDuty.textContent = `Peak: ${data.closedLoopPeakTempC.toFixed(1)} °C`;
+          if (els.liveKpiTc) els.liveKpiTc.textContent = `Open-Loop: ${data.openLoopPeakTempC.toFixed(1)} °C`;
+          if (els.liveKpiTrip) els.liveKpiTrip.textContent = `Trip > ${data.maxSafeTempC.toFixed(1)} °C`;
+        }
+
+        const isRunaway = Boolean(data.closedLoopRunawayTriggered);
+        if (els.liveKpiStatus) {
+          els.liveKpiStatus.textContent = isRunaway ? 'RUNAWAY TRIP' : 'e-NMPC SAFE';
+          els.liveKpiStatus.style.color = isRunaway ? '#fb7185' : '#34d399';
+        }
+        if (els.liveKpiCardStatus) {
+          els.liveKpiCardStatus.style.borderLeftColor = isRunaway ? '#f43f5e' : '#10b981';
+        }
+        if (els.cstrLiveBanner) {
+          els.cstrLiveBanner.style.display = isRunaway ? 'block' : 'none';
+        }
+
+        if (els.liveKpiSpecies && els.liveKpiSelectivity) {
+          const olStatus = data.openLoopRunawayTriggered ? 'RUNAWAY' : 'SAFE';
+          const clStatus = data.closedLoopRunawayTriggered ? 'RUNAWAY' : 'SAFE';
+          els.liveKpiSpecies.textContent =
+            `Open-Loop Peak ${data.openLoopPeakTempC.toFixed(1)}°C (Cb ${data.openLoopFinalCbMolPerL.toFixed(3)}M, ${olStatus}) | e-NMPC Peak ${data.closedLoopPeakTempC.toFixed(1)}°C (Cb ${data.closedLoopFinalCbMolPerL.toFixed(3)}M, ${clStatus})`;
+          els.liveKpiSelectivity.textContent =
+            `EKF6 Cb RMSE: ${data.ekfMeanCbRmseMolPerL.toFixed(4)} M | Max NIS: ${data.maxNis.toFixed(2)} (Faults ${data.faultCount}) | SB: ${data.closedLoopFinalSelectivityBPct.toFixed(1)}%`;
+        }
+
+        drawCstrLiveChart([]);
+      } catch (err) {
+        console.error('Failed to run closed-loop comparison:', err);
+      }
+    }
 
     function handleCstrTelemetryFrame(frame) {
       const isSp = frame.cbMolPerL !== undefined || frame.jacketTemperatureKelvin !== undefined;
@@ -2251,26 +2394,37 @@
       ctx.fillStyle = '#080c14';
       ctx.fillRect(0, 0, W, H);
 
+      const clOverlay = closedLoopOverlayResult;
       const overlay = runawayOverlayProfile;
+      const clSeries = clOverlay ? (clOverlay.trajectory || []) : [];
       const nomSeries = overlay ? (overlay.nominalTrajectory || []) : (history || []);
       const runSeries = overlay ? (overlay.runawayTrajectory || []) : [];
-      const nPts = Math.max(nomSeries.length, runSeries.length);
+      const nPts = clOverlay ? clSeries.length : Math.max(nomSeries.length, runSeries.length);
 
       if (nPts === 0) return;
 
-      const allTemps = [
-        ...nomSeries.map(f => f.temperatureCelsius ?? 25),
-        ...nomSeries.map(f => f.jacketTemperatureCelsius ?? 20),
-        ...runSeries.map(f => f.temperatureCelsius ?? 25),
-        overlay ? overlay.maxSafeTemperatureCelsius : 146.85
-      ];
+      const allTemps = clOverlay
+        ? [
+            ...clSeries.map(f => f.openLoopTempC ?? 25),
+            ...clSeries.map(f => f.closedLoopTempC ?? 25),
+            ...clSeries.map(f => f.closedLoopJacketTempC ?? 20),
+            clOverlay.maxSafeTempC
+          ]
+        : [
+            ...nomSeries.map(f => f.temperatureCelsius ?? 25),
+            ...nomSeries.map(f => f.jacketTemperatureCelsius ?? 20),
+            ...runSeries.map(f => f.temperatureCelsius ?? 25),
+            overlay ? overlay.maxSafeTemperatureCelsius : 146.85
+          ];
       const tMin = Math.floor(Math.min(...allTemps, 15) / 10) * 10;
-      const tMax = Math.ceil(Math.max(...allTemps, 160) / 10) * 10;
+      const tMax = Math.ceil(Math.max(...allTemps, clOverlay ? 140 : 160) / 10) * 10;
       const tSpan = Math.max(10, tMax - tMin);
 
-      const maxConc = overlay
-        ? 1.1
-        : Math.max(1.0, ...nomSeries.map(f => Math.max(f.caMolPerL || 0, f.cbMolPerL || 0, f.ccMolPerL || 0, f.cdMolPerL || 0)) * 1.1);
+      const maxConc = clOverlay
+        ? Math.max(0.4, ...clSeries.map(f => Math.max(f.openLoopCbMolPerL || 0, f.closedLoopCbMolPerL || 0, f.ekfCbMolPerL || 0)) * 1.15)
+        : (overlay
+            ? 1.1
+            : Math.max(1.0, ...nomSeries.map(f => Math.max(f.caMolPerL || 0, f.cbMolPerL || 0, f.ccMolPerL || 0, f.cdMolPerL || 0)) * 1.1));
 
       const xAt = (i, len) => padL + (len <= 1 ? 0 : (i / (len - 1)) * plotW);
       const yT = (tempC) => padT + plotH - ((tempC - tMin) / tSpan) * plotH;
@@ -2292,7 +2446,7 @@
         ctx.textAlign = 'right';
         ctx.fillText(`${tempTick.toFixed(0)}°C`, padL - 6, y + 4);
 
-        if (!overlay) {
+        if (!overlay || clOverlay) {
           const cTick = maxConc * (1 - k / 4);
           ctx.textAlign = 'left';
           ctx.fillText(`${cTick.toFixed(2)}M`, W - padR + 6, y + 4);
@@ -2300,7 +2454,9 @@
       }
 
       // Trip threshold line
-      const tripC = overlay ? overlay.maxSafeTemperatureCelsius : 146.85;
+      const tripC = clOverlay
+        ? clOverlay.maxSafeTempC
+        : (overlay ? overlay.maxSafeTemperatureCelsius : 146.85);
       if (tripC >= tMin && tripC <= tMax) {
         const yTrip = yT(tripC);
         ctx.save();
@@ -2334,7 +2490,39 @@
         ctx.restore();
       };
 
-      if (overlay) {
+      if (clOverlay) {
+        drawCurve(clSeries, f => f.openLoopCbMolPerL || 0, yC, '#fb923c', 1.6, true);
+        drawCurve(clSeries, f => f.closedLoopCbMolPerL || 0, yC, '#38bdf8', 2.2, false);
+        drawCurve(clSeries, f => f.ekfCbMolPerL || 0, yC, '#c084fc', 2.0, true);
+        drawCurve(clSeries, f => f.closedLoopJacketTempC ?? 25, yT, '#06b6d4', 1.5, true);
+        drawCurve(clSeries, f => f.openLoopTempC ?? 25, yT, '#f43f5e', 2.3, false);
+        drawCurve(clSeries, f => f.closedLoopTempC ?? 25, yT, '#34d399', 2.6, false);
+
+        ctx.textAlign = 'left';
+        const items = [
+          ['e-NMPC T', '#34d399'],
+          ['Open-Loop T', '#f43f5e'],
+          ['Jacket Tj', '#06b6d4'],
+          ['True Cb', '#38bdf8'],
+          ['EKF6 Cb', '#c084fc'],
+          ['Open Cb', '#fb923c']
+        ];
+        let lx = padL;
+        items.forEach(([label, color]) => {
+          ctx.fillStyle = color;
+          ctx.fillRect(lx, 10, 10, 3);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillText(label, lx + 14, 15);
+          lx += ctx.measureText(label).width + 26;
+        });
+
+        const lastMin = clSeries[clSeries.length - 1]?.timeMin ?? 0;
+        ctx.fillStyle = '#94a3b8';
+        ctx.textAlign = 'left';
+        ctx.fillText('0.0 min', padL, H - 8);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${lastMin.toFixed(1)} min`, W - padR, H - 8);
+      } else if (overlay) {
         drawCurve(nomSeries, f => f.jacketTemperatureCelsius, yT, '#06b6d4', 1.6, true);
         drawCurve(nomSeries, f => f.temperatureCelsius, yT, '#34d399', 2.4, false);
         drawCurve(runSeries, f => f.temperatureCelsius, yT, '#f43f5e', 2.6, false);
@@ -2353,6 +2541,13 @@
           ctx.fillText(label, lx + 16, 15);
           lx += ctx.measureText(label).width + 36;
         });
+
+        const lastTime = nomSeries[nomSeries.length - 1]?.timeSeconds ?? 0;
+        ctx.fillStyle = '#94a3b8';
+        ctx.textAlign = 'left';
+        ctx.fillText('0 s', padL, H - 8);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${lastTime.toFixed(1)} s`, W - padR, H - 8);
       } else {
         drawCurve(nomSeries, f => f.caMolPerL || 0, yC, '#38bdf8', 1.8, false);
         drawCurve(nomSeries, f => f.cbMolPerL || 0, yC, '#34d399', 1.8, false);
@@ -2378,19 +2573,19 @@
           ctx.fillText(label, lx + 14, 15);
           lx += ctx.measureText(label).width + 28;
         });
-      }
 
-      const lastTime = nomSeries[nomSeries.length - 1]?.timeSeconds ?? 0;
-      ctx.fillStyle = '#94a3b8';
-      ctx.textAlign = 'left';
-      ctx.fillText('0 s', padL, H - 8);
-      ctx.textAlign = 'right';
-      ctx.fillText(`${lastTime.toFixed(1)} s`, W - padR, H - 8);
+        const lastTime = nomSeries[nomSeries.length - 1]?.timeSeconds ?? 0;
+        ctx.fillStyle = '#94a3b8';
+        ctx.textAlign = 'left';
+        ctx.fillText('0 s', padL, H - 8);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${lastTime.toFixed(1)} s`, W - padR, H - 8);
+      }
     }
 
     function drawCstrLiveChart(history) {
       if (!els.cstrLiveCanvas) return;
-      if (runawayOverlayProfile || (history && history.length > 0 && history[0].cbMolPerL !== undefined)) {
+      if (closedLoopOverlayResult || runawayOverlayProfile || (history && history.length > 0 && history[0].cbMolPerL !== undefined)) {
         drawSeriesParallelLiveChart(history);
         return;
       }
@@ -2582,7 +2777,20 @@
       }
     });
 
+    ['inpNmpcWeightCb', 'inpNmpcMaxTempC', 'inpNmpcInitValve', 'inpNmpcTargetCb', 'inpNmpcDistStep'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', updateLabels);
+        el.addEventListener('change', () => {
+          if (closedLoopOverlayResult) {
+            runClosedLoopControlComparison();
+          }
+        });
+      }
+    });
+
     if (els.btnLoadRunawayProfile) els.btnLoadRunawayProfile.addEventListener('click', loadRunawayProfile);
+    if (els.btnLoadClosedLoopComparison) els.btnLoadClosedLoopComparison.addEventListener('click', runClosedLoopControlComparison);
     if (els.btnStartCstrStream) els.btnStartCstrStream.addEventListener('click', startCstrStream);
     if (els.btnStopCstrStream) els.btnStopCstrStream.addEventListener('click', stopCstrStream);
 

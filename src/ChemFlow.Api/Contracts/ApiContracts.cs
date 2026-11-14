@@ -419,3 +419,69 @@ public sealed record SeriesParallelRunawayProfileResponse(
     IReadOnlyList<SeriesParallelTelemetryFrameDto> RunawayTrajectory
 );
 
+public sealed record SeriesParallelClosedLoopRequest(
+    int TotalSteps = 80,
+    double SampleTimeMin = 0.05,
+    double InitialValvePct = 15.0,
+    double NominalFeedTempC = 51.85,
+    double DisturbanceFeedTempC = 76.85,
+    int DisturbanceStep = 12,
+    double CaFeedMolPerL = 1.0,
+    double JacketTInC = 21.85,
+    double MaxSafeTempC = 126.85,
+    double WeightCbEconomic = 60.0,
+    double WeightByproduct = 10.0,
+    double? TargetCbMolPerL = null,
+    double MaxSlewPerStepPct = 35.0
+);
+
+public sealed record SeriesParallelClosedLoopPointDto(
+    int Step,
+    double TimeMin,
+    double FeedTempC,
+    double OpenLoopTempC,
+    double OpenLoopJacketTempC,
+    double OpenLoopCaMolPerL,
+    double OpenLoopCbMolPerL,
+    double OpenLoopSelectivityBPct,
+    double OpenLoopValvePct,
+    bool OpenLoopRunaway,
+    double ClosedLoopTempC,
+    double ClosedLoopJacketTempC,
+    double ClosedLoopCaMolPerL,
+    double ClosedLoopCbMolPerL,
+    double ClosedLoopCcMolPerL,
+    double ClosedLoopCdMolPerL,
+    double ClosedLoopConversionAPct,
+    double ClosedLoopYieldBPct,
+    double ClosedLoopSelectivityBPct,
+    double ClosedLoopValvePct,
+    bool ClosedLoopRunaway,
+    double EkfCaMolPerL,
+    double EkfCbMolPerL,
+    double EkfTempC,
+    double EkfJacketTempC,
+    double Nis,
+    bool SensorFaultDetected,
+    double NmpcObjectiveCost
+);
+
+public sealed record SeriesParallelClosedLoopResponse(
+    string EngineMode,
+    double MaxSafeTempC,
+    double OpenLoopPeakTempC,
+    double OpenLoopFinalCbMolPerL,
+    double OpenLoopFinalSelectivityBPct,
+    bool OpenLoopRunawayTriggered,
+    double ClosedLoopPeakTempC,
+    double ClosedLoopFinalCbMolPerL,
+    double ClosedLoopMeanCbMolPerL,
+    double ClosedLoopFinalSelectivityBPct,
+    bool ClosedLoopRunawayTriggered,
+    double EkfFinalCbAbsErrorMolPerL,
+    double EkfMeanCbRmseMolPerL,
+    double MaxNis,
+    int FaultCount,
+    IReadOnlyList<SeriesParallelClosedLoopPointDto> Trajectory
+);
+
