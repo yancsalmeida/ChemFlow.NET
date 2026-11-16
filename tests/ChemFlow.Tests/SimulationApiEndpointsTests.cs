@@ -435,6 +435,27 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.Contains("btnLoadClosedLoopComparison", html);
         Assert.Contains("inpNmpcWeightCb", html);
     }
+
+    [Fact]
+    public async Task SupervisoryModbus_Endpoints_ReturnStatusHandleUnreachablePortAndExposeSilUi()
+    {
+        HttpResponseMessage statusRes = await _client.GetAsync("/api/supervisory/modbus/status");
+        Assert.Equal(HttpStatusCode.OK, statusRes.StatusCode);
+
+        SupervisoryModbusStatusResponse? status =
+            await statusRes.Content.ReadFromJsonAsync<SupervisoryModbusStatusResponse>();
+        Assert.NotNull(status);
+        Assert.False(status.IsRunning);
+
+        HttpResponseMessage failStartRes = await _client.PostAsJsonAsync(
+            "/api/supervisory/modbus/start",
+            new SupervisoryModbusStartRequest(Host: "127.0.0.1", Port: 59999));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, failStartRes.StatusCode);
+
+        string html = await _client.GetStringAsync("/");
+        Assert.Contains("btnSilStart", html);
+        Assert.Contains("inpSilModbusHost", html);
+    }
 }
 
 

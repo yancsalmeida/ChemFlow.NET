@@ -789,6 +789,22 @@
             <input type="range" id="inpNmpcDistStep" min="5" max="30" step="1" value="12" />
           </div>
         </div>
+
+        <!-- Distributed Software-in-the-Loop (Modbus TCP -> C# EKF6 + e-NMPC) Control Bar -->
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.65rem; margin-top: 0.65rem; background: rgba(56, 189, 248, 0.07); padding: 0.65rem 0.75rem; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.28);">
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.75rem; color: #bae6fd;">
+            <strong style="color: #38bdf8;">Distributed SIL (Modbus TCP):</strong>
+            <input type="text" id="inpSilModbusHost" placeholder="host (auto)" style="width: 125px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; padding: 0.25rem 0.45rem; font-size: 0.75rem; font-family: var(--font-mono);" />
+            <input type="number" id="inpSilModbusPort" value="5020" min="1" max="65535" style="width: 68px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 4px; padding: 0.25rem 0.4rem; font-size: 0.75rem; font-family: var(--font-mono);" />
+            <span id="lblSilStatus" style="padding: 0.2rem 0.5rem; border-radius: 999px; background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3); color: #cbd5e1;">SIL IDLE</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;">
+            <button class="btn-primary" id="btnSilStart" style="background: #0284c7; border-color: #38bdf8; padding: 0.3rem 0.7rem; font-size: 0.76rem;">&#9654; Start Modbus SIL</button>
+            <button class="btn-secondary" id="btnSilDisturbHot" style="border-color: #f59e0b; color: #fcd34d; background: rgba(245, 158, 11, 0.14); padding: 0.3rem 0.65rem; font-size: 0.75rem;">&#9889; Feed Step 76.9 °C</button>
+            <button class="btn-secondary" id="btnSilDisturbNominal" style="border-color: #34d399; color: #6ee7b7; background: rgba(16, 185, 129, 0.12); padding: 0.3rem 0.65rem; font-size: 0.75rem;">&#8634; Feed 51.9 °C</button>
+            <button class="btn-secondary" id="btnSilStop" style="display: none; background: #e11d48; border-color: #f43f5e; color: #fff; padding: 0.3rem 0.7rem; font-size: 0.76rem;">&#9632; Stop SIL</button>
+          </div>
+        </div>
       </div>
 
       <!-- Distillation Column Stage Profiles Panel (MESH Wang-Henke BP) -->
@@ -1087,6 +1103,13 @@
       inpNmpcDistStep: document.getElementById('inpNmpcDistStep'),
       lblNmpcDistStep: document.getElementById('lblNmpcDistStep'),
       liveKpiTrip: document.getElementById('liveKpiTrip'),
+      inpSilModbusHost: document.getElementById('inpSilModbusHost'),
+      inpSilModbusPort: document.getElementById('inpSilModbusPort'),
+      lblSilStatus: document.getElementById('lblSilStatus'),
+      btnSilStart: document.getElementById('btnSilStart'),
+      btnSilDisturbHot: document.getElementById('btnSilDisturbHot'),
+      btnSilDisturbNominal: document.getElementById('btnSilDisturbNominal'),
+      btnSilStop: document.getElementById('btnSilStop'),
       liveSeriesParallelStrip: document.getElementById('liveSeriesParallelStrip'),
       liveKpiSpecies: document.getElementById('liveKpiSpecies'),
       liveKpiSelectivity: document.getElementById('liveKpiSelectivity'),
@@ -2050,6 +2073,10 @@
         }
       });
 
+      signalrConnection.on('SupervisoryModbusTick', (tick) => {
+        handleSupervisoryModbusTick(tick);
+      });
+
       try {
         await signalrConnection.start();
         updateSignalRBadge(true);
@@ -2224,9 +2251,177 @@
 
     let runawayOverlayProfile = null;
     let closedLoopOverlayResult = null;
+    let silModeActive = false;
+    let silTrajectory = [];
+    let silPollTimer = null;
+
+    function updateSilButtons(running, statusText) {
+      if (els.btnSilStart) els.btnSilStart.style.display = running ? 'none' : 'inline-block';
+      if (els.btnSilStop) els.btnSilStop.style.display = running ? 'inline-block' : 'none';
+      if (els.lblSilStatus) {
+        els.lblSilStatus.textContent = statusText || (running ? 'SIL ACTIVE' : 'SIL IDLE');
+        els.lblSilStatus.style.color = running ? '#34d399' : '#cbd5e1';
+        els.lblSilStatus.style.borderColor = running ? 'rgba(16, 185, 129, 0.5)' : 'rgba(148, 163, 184, 0.3)';
+        els.lblSilStatus.style.background = running ? 'rgba(16, 185, 129, 0.14)' : 'rgba(148, 163, 184, 0.15)';
+      }
+    }
+
+    function handleSupervisoryModbusTick(tick) {
+      if (!tick) return;
+      silModeActive = true;
+      runawayOverlayProfile = null;
+      closedLoopOverlayResult = null;
+
+      silTrajectory.push(tick);
+      if (silTrajectory.length > 120) silTrajectory.shift();
+
+      updateSilButtons(true, `SIL ACTIVE | Step ${tick.step} | RTT ${tick.modbusRttMs.toFixed(1)} ms`);
+
+      if (els.telemetryEngineBadge) {
+        els.telemetryEngineBadge.textContent = `Engine: ${tick.engineMode} | SIL Modbus TCP`;
+      }
+      if (els.liveKpiTemp) els.liveKpiTemp.textContent = `${tick.plantTempC.toFixed(1)} °C`;
+      if (els.liveKpiTempK) els.liveKpiTempK.textContent = `${(tick.plantTempC + 273.15).toFixed(2)} K`;
+      if (els.liveKpiCa) els.liveKpiCa.textContent = `${tick.plantCaMolPerL.toFixed(3)} mol/L`;
+      if (els.liveKpiCaFeed) els.liveKpiCaFeed.textContent = `Cb: ${tick.plantCbMolPerL.toFixed(3)} M (EKF ${tick.ekfCbMolPerL.toFixed(3)})`;
+      const convPct = Math.max(0, Math.min(100, (1.0 - tick.plantCaMolPerL) * 100.0));
+      if (els.liveKpiConv) els.liveKpiConv.textContent = `${convPct.toFixed(1)} %`;
+      if (els.liveKpiRate) els.liveKpiRate.textContent = `FCV-201: ${tick.commandedValvePct.toFixed(1)}%`;
+      if (els.liveKpiDuty) els.liveKpiDuty.textContent = `NMPC ${tick.nmpcSolveMs.toFixed(2)} ms`;
+      if (els.liveKpiTc) els.liveKpiTc.textContent = `Feed: ${tick.plantFeedTempC.toFixed(1)}°C | Tj: ${tick.plantJacketTempC.toFixed(1)}°C`;
+
+      const isRunaway = Boolean(tick.plantRunawayAlarm);
+      if (els.liveKpiStatus) {
+        els.liveKpiStatus.textContent = isRunaway ? 'RUNAWAY TRIP' : 'SIL MODBUS OK';
+        els.liveKpiStatus.style.color = isRunaway ? '#fb7185' : '#38bdf8';
+      }
+      if (els.liveKpiCardStatus) {
+        els.liveKpiCardStatus.style.borderLeftColor = isRunaway ? '#f43f5e' : '#38bdf8';
+      }
+      if (els.cstrLiveBanner) {
+        els.cstrLiveBanner.style.display = isRunaway ? 'block' : 'none';
+      }
+
+      if (els.liveKpiSpecies && els.liveKpiSelectivity) {
+        const cbErr = Math.abs(tick.plantCbMolPerL - tick.ekfCbMolPerL);
+        els.liveKpiSpecies.textContent =
+          `Plant Ca:${tick.plantCaMolPerL.toFixed(3)} Cb:${tick.plantCbMolPerL.toFixed(3)} | C# EKF6 Ca:${tick.ekfCaMolPerL.toFixed(3)} Cb:${tick.ekfCbMolPerL.toFixed(3)} (|err|=${cbErr.toFixed(4)})`;
+        els.liveKpiSelectivity.textContent =
+          `SB:${tick.plantSelectivityBPct.toFixed(1)}% | NIS:${tick.ekfNis.toFixed(2)} | Valve:${tick.commandedValvePct.toFixed(1)}% | Sim:${tick.simTimeMin.toFixed(2)}m`;
+      }
+
+      drawCstrLiveChart([]);
+    }
+
+    async function startModbusSilLoop() {
+      stopCstrStream();
+      if (!signalrConnection || signalrConnection.state !== 'Connected') {
+        try { await initSignalR(); } catch (e) { console.warn(e); }
+      }
+      const hostVal = els.inpSilModbusHost?.value?.trim() || null;
+      const portVal = parseInt(els.inpSilModbusPort?.value || '5020', 10);
+      const weightCb = parseFloat(els.inpNmpcWeightCb?.value || '60.0');
+      const maxSafeTempC = parseFloat(els.inpNmpcMaxTempC?.value || '126.85');
+      const tgtCbRaw = parseFloat(els.inpNmpcTargetCb?.value || '0.0');
+
+      updateSilButtons(false, 'CONNECTING...');
+      try {
+        const res = await fetch('/api/supervisory/modbus/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host: hostVal,
+            port: Number.isFinite(portVal) ? portVal : null,
+            scanIntervalMs: 500,
+            timeScale: 5.0,
+            weightCbEconomic: weightCb,
+            maxSafeTempC: maxSafeTempC,
+            targetCbMolPerL: tgtCbRaw > 0.001 ? tgtCbRaw : null,
+            maxSlewPerStepPct: 25.0
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.detail || data?.title || 'SIL start failed');
+
+        if (els.inpSilModbusHost && !els.inpSilModbusHost.value) els.inpSilModbusHost.value = data.host || '';
+        if (els.inpSilModbusPort && data.port) els.inpSilModbusPort.value = String(data.port);
+        silTrajectory = [];
+        (data.history || []).forEach(handleSupervisoryModbusTick);
+        if (data.latestTick && silTrajectory.length === 0) handleSupervisoryModbusTick(data.latestTick);
+
+        if (silPollTimer) clearInterval(silPollTimer);
+        silPollTimer = setInterval(async () => {
+          if (!silModeActive) return;
+          if (signalrConnection && signalrConnection.state === 'Connected') return;
+          try {
+            const st = await (await fetch('/api/supervisory/modbus/status')).json();
+            if (st.latestTick && (!silTrajectory.length || silTrajectory[silTrajectory.length - 1].step < st.latestTick.step)) {
+              handleSupervisoryModbusTick(st.latestTick);
+            }
+            if (!st.isRunning) {
+              clearInterval(silPollTimer);
+              silPollTimer = null;
+              updateSilButtons(false, st.lastError ? `ERR: ${st.lastError}` : 'SIL IDLE');
+            }
+          } catch {}
+        }, 700);
+      } catch (err) {
+        console.error('Failed to start Modbus SIL loop:', err);
+        updateSilButtons(false, `ERR: ${err.message}`);
+      }
+    }
+
+    async function stopModbusSilLoop() {
+      if (silPollTimer) { clearInterval(silPollTimer); silPollTimer = null; }
+      try {
+        await fetch('/api/supervisory/modbus/stop', { method: 'POST' });
+      } catch (err) {
+        console.error('Failed to stop Modbus SIL loop:', err);
+      }
+      updateSilButtons(false, 'SIL STOPPED');
+    }
+
+    async function applySilDisturbance(feedTempC) {
+      const tgtCbRaw = parseFloat(els.inpNmpcTargetCb?.value || '0.0');
+      const weightCb = parseFloat(els.inpNmpcWeightCb?.value || '60.0');
+      const maxSafeTempC = parseFloat(els.inpNmpcMaxTempC?.value || '126.85');
+      try {
+        const res = await fetch('/api/supervisory/modbus/disturbance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            feedTempC: feedTempC,
+            clearTargetCb: tgtCbRaw <= 0.001,
+            targetCbMolPerL: tgtCbRaw > 0.001 ? tgtCbRaw : null,
+            weightCbEconomic: weightCb,
+            maxSafeTempC: maxSafeTempC
+          })
+        });
+        if (!res.ok) throw new Error('Disturbance write failed');
+      } catch (err) {
+        console.error('Failed to apply SIL disturbance:', err);
+      }
+    }
+
+    async function syncSilInitialStatus() {
+      try {
+        const res = await fetch('/api/supervisory/modbus/status');
+        if (!res.ok) return;
+        const st = await res.json();
+        if (els.inpSilModbusHost && st.host) els.inpSilModbusHost.value = st.host;
+        if (els.inpSilModbusPort && st.port) els.inpSilModbusPort.value = String(st.port);
+        if (st.isRunning) {
+          silTrajectory = st.history || [];
+          if (st.latestTick) handleSupervisoryModbusTick(st.latestTick);
+        } else {
+          updateSilButtons(false, 'SIL IDLE');
+        }
+      } catch {}
+    }
 
     async function runClosedLoopControlComparison() {
       stopCstrStream();
+      silModeActive = false;
       const weightCb = parseFloat(els.inpNmpcWeightCb?.value || '60.0');
       const maxSafeTempC = parseFloat(els.inpNmpcMaxTempC?.value || '126.85');
       const initValve = parseFloat(els.inpNmpcInitValve?.value || '15.0');
@@ -2394,37 +2589,49 @@
       ctx.fillStyle = '#080c14';
       ctx.fillRect(0, 0, W, H);
 
+      const isSil = silModeActive && silTrajectory.length > 0;
       const clOverlay = closedLoopOverlayResult;
       const overlay = runawayOverlayProfile;
+      const silSeries = isSil ? silTrajectory : [];
       const clSeries = clOverlay ? (clOverlay.trajectory || []) : [];
       const nomSeries = overlay ? (overlay.nominalTrajectory || []) : (history || []);
       const runSeries = overlay ? (overlay.runawayTrajectory || []) : [];
-      const nPts = clOverlay ? clSeries.length : Math.max(nomSeries.length, runSeries.length);
+      const nPts = isSil ? silSeries.length : (clOverlay ? clSeries.length : Math.max(nomSeries.length, runSeries.length));
 
       if (nPts === 0) return;
 
-      const allTemps = clOverlay
+      const maxSafeSilC = parseFloat(els.inpNmpcMaxTempC?.value || '126.85');
+      const allTemps = isSil
         ? [
-            ...clSeries.map(f => f.openLoopTempC ?? 25),
-            ...clSeries.map(f => f.closedLoopTempC ?? 25),
-            ...clSeries.map(f => f.closedLoopJacketTempC ?? 20),
-            clOverlay.maxSafeTempC
+            ...silSeries.map(f => f.plantTempC ?? 25),
+            ...silSeries.map(f => f.plantJacketTempC ?? 20),
+            ...silSeries.map(f => f.plantFeedTempC ?? 50),
+            maxSafeSilC
           ]
-        : [
-            ...nomSeries.map(f => f.temperatureCelsius ?? 25),
-            ...nomSeries.map(f => f.jacketTemperatureCelsius ?? 20),
-            ...runSeries.map(f => f.temperatureCelsius ?? 25),
-            overlay ? overlay.maxSafeTemperatureCelsius : 146.85
-          ];
+        : (clOverlay
+          ? [
+              ...clSeries.map(f => f.openLoopTempC ?? 25),
+              ...clSeries.map(f => f.closedLoopTempC ?? 25),
+              ...clSeries.map(f => f.closedLoopJacketTempC ?? 20),
+              clOverlay.maxSafeTempC
+            ]
+          : [
+              ...nomSeries.map(f => f.temperatureCelsius ?? 25),
+              ...nomSeries.map(f => f.jacketTemperatureCelsius ?? 20),
+              ...runSeries.map(f => f.temperatureCelsius ?? 25),
+              overlay ? overlay.maxSafeTemperatureCelsius : 146.85
+            ]);
       const tMin = Math.floor(Math.min(...allTemps, 15) / 10) * 10;
-      const tMax = Math.ceil(Math.max(...allTemps, clOverlay ? 140 : 160) / 10) * 10;
+      const tMax = Math.ceil(Math.max(...allTemps, (isSil || clOverlay) ? 135 : 160) / 10) * 10;
       const tSpan = Math.max(10, tMax - tMin);
 
-      const maxConc = clOverlay
-        ? Math.max(0.4, ...clSeries.map(f => Math.max(f.openLoopCbMolPerL || 0, f.closedLoopCbMolPerL || 0, f.ekfCbMolPerL || 0)) * 1.15)
-        : (overlay
-            ? 1.1
-            : Math.max(1.0, ...nomSeries.map(f => Math.max(f.caMolPerL || 0, f.cbMolPerL || 0, f.ccMolPerL || 0, f.cdMolPerL || 0)) * 1.1));
+      const maxConc = isSil
+        ? Math.max(0.5, ...silSeries.map(f => Math.max(f.plantCbMolPerL || 0, f.ekfCbMolPerL || 0, (f.commandedValvePct || 0) / 100.0)) * 1.1)
+        : (clOverlay
+          ? Math.max(0.4, ...clSeries.map(f => Math.max(f.openLoopCbMolPerL || 0, f.closedLoopCbMolPerL || 0, f.ekfCbMolPerL || 0)) * 1.15)
+          : (overlay
+              ? 1.1
+              : Math.max(1.0, ...nomSeries.map(f => Math.max(f.caMolPerL || 0, f.cbMolPerL || 0, f.ccMolPerL || 0, f.cdMolPerL || 0)) * 1.1)));
 
       const xAt = (i, len) => padL + (len <= 1 ? 0 : (i / (len - 1)) * plotW);
       const yT = (tempC) => padT + plotH - ((tempC - tMin) / tSpan) * plotH;
@@ -2446,7 +2653,7 @@
         ctx.textAlign = 'right';
         ctx.fillText(`${tempTick.toFixed(0)}°C`, padL - 6, y + 4);
 
-        if (!overlay || clOverlay) {
+        if (isSil || !overlay || clOverlay) {
           const cTick = maxConc * (1 - k / 4);
           ctx.textAlign = 'left';
           ctx.fillText(`${cTick.toFixed(2)}M`, W - padR + 6, y + 4);
@@ -2454,9 +2661,11 @@
       }
 
       // Trip threshold line
-      const tripC = clOverlay
-        ? clOverlay.maxSafeTempC
-        : (overlay ? overlay.maxSafeTemperatureCelsius : 146.85);
+      const tripC = isSil
+        ? maxSafeSilC
+        : (clOverlay
+          ? clOverlay.maxSafeTempC
+          : (overlay ? overlay.maxSafeTemperatureCelsius : 146.85));
       if (tripC >= tMin && tripC <= tMax) {
         const yTrip = yT(tripC);
         ctx.save();
@@ -2490,7 +2699,40 @@
         ctx.restore();
       };
 
-      if (clOverlay) {
+      if (isSil) {
+        drawCurve(silSeries, f => (f.commandedValvePct || 0) / 100.0, yC, '#fbbf24', 1.5, true);
+        drawCurve(silSeries, f => f.plantCbMolPerL || 0, yC, '#38bdf8', 2.2, false);
+        drawCurve(silSeries, f => f.ekfCbMolPerL || 0, yC, '#c084fc', 2.0, true);
+        drawCurve(silSeries, f => f.plantFeedTempC ?? 52, yT, '#fb923c', 1.4, true);
+        drawCurve(silSeries, f => f.plantJacketTempC ?? 25, yT, '#06b6d4', 1.6, true);
+        drawCurve(silSeries, f => f.plantTempC ?? 25, yT, '#34d399', 2.6, false);
+
+        ctx.textAlign = 'left';
+        const items = [
+          ['Plant T(°C)', '#34d399'],
+          ['Tj(°C)', '#06b6d4'],
+          ['Feed T0', '#fb923c'],
+          ['Plant Cb', '#38bdf8'],
+          ['C# EKF6 Cb', '#c084fc'],
+          ['Valve/100', '#fbbf24']
+        ];
+        let lx = padL;
+        items.forEach(([label, color]) => {
+          ctx.fillStyle = color;
+          ctx.fillRect(lx, 10, 10, 3);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillText(label, lx + 14, 15);
+          lx += ctx.measureText(label).width + 24;
+        });
+
+        const firstSim = silSeries[0]?.simTimeMin ?? 0;
+        const lastSim = silSeries[silSeries.length - 1]?.simTimeMin ?? 0;
+        ctx.fillStyle = '#94a3b8';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${firstSim.toFixed(2)} min`, padL, H - 8);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${lastSim.toFixed(2)} min`, W - padR, H - 8);
+      } else if (clOverlay) {
         drawCurve(clSeries, f => f.openLoopCbMolPerL || 0, yC, '#fb923c', 1.6, true);
         drawCurve(clSeries, f => f.closedLoopCbMolPerL || 0, yC, '#38bdf8', 2.2, false);
         drawCurve(clSeries, f => f.ekfCbMolPerL || 0, yC, '#c084fc', 2.0, true);
@@ -2585,7 +2827,7 @@
 
     function drawCstrLiveChart(history) {
       if (!els.cstrLiveCanvas) return;
-      if (closedLoopOverlayResult || runawayOverlayProfile || (history && history.length > 0 && history[0].cbMolPerL !== undefined)) {
+      if ((silModeActive && silTrajectory.length > 0) || closedLoopOverlayResult || runawayOverlayProfile || (history && history.length > 0 && history[0].cbMolPerL !== undefined)) {
         drawSeriesParallelLiveChart(history);
         return;
       }
@@ -2793,6 +3035,11 @@
     if (els.btnLoadClosedLoopComparison) els.btnLoadClosedLoopComparison.addEventListener('click', runClosedLoopControlComparison);
     if (els.btnStartCstrStream) els.btnStartCstrStream.addEventListener('click', startCstrStream);
     if (els.btnStopCstrStream) els.btnStopCstrStream.addEventListener('click', stopCstrStream);
+    if (els.btnSilStart) els.btnSilStart.addEventListener('click', startModbusSilLoop);
+    if (els.btnSilStop) els.btnSilStop.addEventListener('click', stopModbusSilLoop);
+    if (els.btnSilDisturbHot) els.btnSilDisturbHot.addEventListener('click', () => applySilDisturbance(76.85));
+    if (els.btnSilDisturbNominal) els.btnSilDisturbNominal.addEventListener('click', () => applySilDisturbance(51.85));
+    syncSilInitialStatus();
 
     els.selLight.addEventListener('change', () => loadTxyDiagram());
     els.selHeavy.addEventListener('change', () => loadTxyDiagram());

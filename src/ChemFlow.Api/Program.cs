@@ -5,6 +5,7 @@ using ChemFlow.Domain.Control;
 using ChemFlow.Domain.Data;
 using ChemFlow.Domain.Entities;
 using ChemFlow.Domain.Flowsheet;
+using ChemFlow.Domain.Industrial;
 using ChemFlow.Domain.Mathematics;
 using ChemFlow.Domain.Native;
 using ChemFlow.Domain.Repositories;
@@ -12,6 +13,7 @@ using ChemFlow.Domain.Streams;
 using ChemFlow.Domain.Thermodynamics;
 using ChemFlow.Domain.Transport;
 using ChemFlow.Domain.Units;
+using ChemFlow.Infrastructure.Industrial;
 using ChemFlow.Infrastructure.Persistence;
 using ChemFlow.Infrastructure.Repositories;
 
@@ -36,6 +38,9 @@ builder.Services.AddScoped<ISimulationHistoryRepository, SqliteSimulationHistory
 builder.Services.AddSingleton<RaoultThermodynamicPackage>();
 builder.Services.AddSingleton<PengRobinsonThermodynamicPackage>();
 builder.Services.AddSingleton<IThermodynamicPackage>(sp => sp.GetRequiredService<PengRobinsonThermodynamicPackage>());
+builder.Services.AddSingleton<IModbusTcpClientFactory, ModbusTcpClientFactory>();
+builder.Services.AddSingleton<SupervisoryModbusControllerService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SupervisoryModbusControllerService>());
 
 var app = builder.Build();
 
@@ -1200,6 +1205,51 @@ app.MapPost("/api/telemetry/cstr/series-parallel/closed-loop", (SeriesParallelCl
     ));
 })
 .WithName("RunSeriesParallelClosedLoopComparison")
+.WithOpenApi();
+
+app.MapGet("/api/supervisory/modbus/status", (SupervisoryModbusControllerService supervisory) =>
+    Results.Ok(supervisory.GetStatus()))
+.WithName("GetSupervisoryModbusStatus")
+.WithOpenApi();
+
+app.MapPost("/api/supervisory/modbus/start", async (
+    SupervisoryModbusStartRequest? request,
+    SupervisoryModbusControllerService supervisory,
+    CancellationToken ct) =>
+{
+    try
+    {
+        var status = await supervisory.StartControlLoopAsync(request, ct);
+        return Results.Ok(status);
+    }
+    catch (Exception ex) when (ex is System.Net.Sockets.SocketException or TimeoutException or OperationCanceledException)
+    {
+        return Results.Problem(
+            title: "Unable to connect to remote ProcessTwin Modbus TCP PLC",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+})
+.WithName("StartSupervisoryModbusLoop")
+.WithOpenApi();
+
+app.MapPost("/api/supervisory/modbus/disturbance", async (
+    SupervisoryDisturbanceRequest request,
+    SupervisoryModbusControllerService supervisory,
+    CancellationToken ct) =>
+{
+    var status = await supervisory.ApplyDisturbanceAsync(request, ct);
+    return Results.Ok(status);
+})
+.WithName("ApplySupervisoryModbusDisturbance")
+.WithOpenApi();
+
+app.MapPost("/api/supervisory/modbus/stop", async (SupervisoryModbusControllerService supervisory) =>
+{
+    var status = await supervisory.StopControlLoopAsync();
+    return Results.Ok(status);
+})
+.WithName("StopSupervisoryModbusLoop")
 .WithOpenApi();
 
 app.Run();

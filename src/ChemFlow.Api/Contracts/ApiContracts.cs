@@ -485,3 +485,66 @@ public sealed record SeriesParallelClosedLoopResponse(
     IReadOnlyList<SeriesParallelClosedLoopPointDto> Trajectory
 );
 
+public sealed record SupervisoryModbusStartRequest(
+    string? Host = null,
+    int? Port = null,
+    int ScanIntervalMs = 500,
+    double TimeScale = 5.0,
+    double WeightCbEconomic = 60.0,
+    double MaxSafeTempC = 126.85,
+    double? TargetCbMolPerL = null,
+    double MaxSlewPerStepPct = 25.0,
+    double? FeedTempOverrideC = null
+);
+
+public sealed record SupervisoryDisturbanceRequest(
+    double? FeedTempC = null,
+    double? TargetCbMolPerL = null,
+    bool ClearTargetCb = false,
+    double? WeightCbEconomic = null,
+    double? MaxSafeTempC = null
+);
+
+public sealed record SupervisoryModbusTickDto(
+    DateTimeOffset TimestampUtc,
+    int Step,
+    double ElapsedSeconds,
+    double SimTimeMin,
+    double PlantTempC,
+    double PlantJacketTempC,
+    double PlantCaMolPerL,
+    double PlantCbMolPerL,
+    double PlantSelectivityBPct,
+    double PlantFeedTempC,
+    bool PlantRunawayAlarm,
+    double EkfCaMolPerL,
+    double EkfCbMolPerL,
+    double EkfTempC,
+    double EkfJacketTempC,
+    double EkfNis,
+    bool SensorFaultDetected,
+    double CommandedValvePct,
+    double NmpcObjectiveCost,
+    double ModbusRttMs,
+    double NmpcSolveMs,
+    string EngineMode
+);
+
+public sealed record SupervisoryModbusStatusResponse(
+    bool IsRunning,
+    string Host,
+    int Port,
+    int ScanIntervalMs,
+    double TimeScale,
+    int StepsExecuted,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? LastTickUtc,
+    string? LastError,
+    double WeightCbEconomic,
+    double MaxSafeTempC,
+    double? TargetCbMolPerL,
+    string EngineMode,
+    SupervisoryModbusTickDto? LatestTick,
+    IReadOnlyList<SupervisoryModbusTickDto> History
+);
+
