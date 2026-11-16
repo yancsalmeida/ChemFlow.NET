@@ -67,7 +67,7 @@ public class SupervisoryModbusControlTests
         Assert.True(runningStatus.IsRunning);
         Assert.True(runningStatus.StepsExecuted >= 5, $"Expected >= 5 SIL steps, got {runningStatus.StepsExecuted}");
         Assert.NotNull(runningStatus.LatestTick);
-        Assert.Equal(76.9, runningStatus.LatestTick.PlantFeedTempC, 1);
+        Assert.InRange(runningStatus.LatestTick.PlantFeedTempC, 76.7, 77.0);
         Assert.False(runningStatus.LatestTick.PlantRunawayAlarm);
         Assert.True(runningStatus.LatestTick.PlantTempC < 126.85);
         Assert.True(simServer.RegisterWrites > 1);

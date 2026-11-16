@@ -38,6 +38,7 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly Queue<SupervisoryModbusTickDto> _history = new();
+    private int _disposed;
 
     private IModbusTcpClient? _modbusClient;
     private CancellationTokenSource? _loopCts;
@@ -490,7 +491,18 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
 
     public async ValueTask DisposeAsync()
     {
-        await StopControlLoopAsync().ConfigureAwait(false);
-        _lifecycleLock.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        await _lifecycleLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await StopControlLoopLockedAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+            _lifecycleLock.Dispose();
+        }
     }
 }
