@@ -1128,7 +1128,6 @@ app.MapPost("/api/telemetry/cstr/series-parallel/closed-loop", (SeriesParallelCl
     double maxSafeTempK = Math.Max(310.0, req.MaxSafeTempC + SeriesParallelActuatorModel.KelvinOffset);
 
     var nmpcCfg = new SpNmpcConfig(
-        SampleTimeMin: Math.Clamp(req.SampleTimeMin, 0.005, 1.0),
         WeightCbEconomic: Math.Clamp(req.WeightCbEconomic, 0.0, 500.0),
         WeightByproduct: Math.Clamp(req.WeightByproduct, 0.0, 200.0),
         MaxSafeTempK: maxSafeTempK,

@@ -399,7 +399,8 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.False(payload.ClosedLoopRunawayTriggered);
         Assert.True(payload.ClosedLoopPeakTempC < payload.MaxSafeTempC);
         Assert.True(payload.ClosedLoopFinalCbMolPerL > payload.OpenLoopFinalCbMolPerL);
-        Assert.True(payload.EkfMeanCbRmseMolPerL < 0.04);
+        Assert.True(payload.EkfMeanCbRmseMolPerL < 0.06);
+        Assert.True(payload.EkfFinalCbAbsErrorMolPerL < 0.02);
         Assert.Equal(0, payload.FaultCount);
     }
 

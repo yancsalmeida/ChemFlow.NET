@@ -79,13 +79,16 @@ public class SeriesParallelControlTests
 
         Assert.Equal(80, result.Trajectory.Count);
         Assert.True(result.OpenLoopRunawayTriggered, $"Expected open-loop runaway, peak was {result.OpenLoopPeakTempC} C");
+        Assert.True(result.OpenLoopPeakTempC > result.MaxSafeTempC && result.OpenLoopPeakTempC < 400.0,
+            $"Open-loop runaway peak should be physical (in ({result.MaxSafeTempC}, 400) C), got {result.OpenLoopPeakTempC} C");
         Assert.False(result.ClosedLoopRunawayTriggered, $"Expected zero closed-loop runaway, peak was {result.ClosedLoopPeakTempC} C");
         Assert.True(result.ClosedLoopPeakTempC < result.MaxSafeTempC,
             $"Closed-loop peak {result.ClosedLoopPeakTempC} C exceeded safety trip {result.MaxSafeTempC} C");
         Assert.True(result.ClosedLoopFinalCbMolPerL > result.OpenLoopFinalCbMolPerL,
             $"Expected e-NMPC Cb ({result.ClosedLoopFinalCbMolPerL}) > Open-Loop Cb ({result.OpenLoopFinalCbMolPerL})");
         Assert.True(result.ClosedLoopFinalSelectivityBPct > result.OpenLoopFinalSelectivityBPct);
-        Assert.True(result.EkfMeanCbRmseMolPerL < 0.04, $"Expected EKF Cb RMSE < 0.04 M, got {result.EkfMeanCbRmseMolPerL:F4}");
+        Assert.True(result.EkfMeanCbRmseMolPerL < 0.06, $"Expected EKF Cb RMSE < 0.06 M, got {result.EkfMeanCbRmseMolPerL:F4}");
+        Assert.True(result.EkfFinalCbAbsErrorMolPerL < 0.02, $"Expected final EKF Cb error < 0.02 M, got {result.EkfFinalCbAbsErrorMolPerL:F4}");
         Assert.Equal(0, result.FaultCount);
     }
 

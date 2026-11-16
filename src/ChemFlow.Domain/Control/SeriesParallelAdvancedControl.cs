@@ -8,11 +8,11 @@ namespace ChemFlow.Domain.Control;
 /// Configuration parameters for the 6-state Series-Parallel CSTR Extended Kalman Filter.
 /// </summary>
 public sealed record SpEkfConfig(
-    double SigmaTempMeasK = 0.35,
-    double SigmaJacketTempMeasK = 0.35,
-    double ProcessNoiseConc = 1e-5,
-    double ProcessNoiseTempK = 0.04,
-    double ProcessNoiseJacketTempK = 0.04,
+    double SigmaTempMeasK = 0.20,
+    double SigmaJacketTempMeasK = 0.15,
+    double ProcessNoiseConc = 0.003,
+    double ProcessNoiseTempK = 0.10,
+    double ProcessNoiseJacketTempK = 0.06,
     double NisFaultThreshold2Dof = 13.8155 // chi2(df=2, p=0.999)
 );
 
@@ -37,20 +37,21 @@ public sealed record SpEkfUpdateResult(
 /// for the series-parallel CSTR (A -> B -> C, A -> D).
 /// </summary>
 public sealed record SpNmpcConfig(
-    int HorizonSteps = 10,
+    int HorizonSteps = 12,
     int ControlBlocks = 4,
-    double SampleTimeMin = 0.05,
+    double PredictionStepMin = 0.08,
     double WeightCbEconomic = 60.0,
     double WeightByproduct = 10.0,
+    double WeightUtilityEffort = 0.35,
     double WeightDeltaU = 0.015,
-    double WeightTempSoft = 0.08,
+    double WeightTempSoft = 0.12,
     double WeightTempHard = 200.0,
     double MaxSafeTempK = 400.0,
-    double SafetyMarginK = 10.0,
+    double SafetyMarginK = 14.0,
     double? TargetCbMolPerL = null,
     double ValveMinPct = 0.0,
     double ValveMaxPct = 100.0,
-    double MaxSlewPerStepPct = 35.0,
+    double MaxSlewPerStepPct = 30.0,
     int MaxIterations = 12
 );
 
@@ -77,14 +78,14 @@ public sealed record SpClosedLoopScenario(
     int DisturbanceStep = 12,
     double CaFeedMolPerL = 1.0,
     double JacketTInC = 21.85,
-    double InitialCaMolPerL = 0.60,
+    double InitialCaMolPerL = 0.50,
     double InitialCbMolPerL = 0.25,
-    double InitialCcMolPerL = 0.05,
-    double InitialCdMolPerL = 0.02,
-    double InitialTempC = 76.85,
-    double InitialJacketTempC = 36.85,
-    double InitialEkfCaBias = 0.20,
-    double InitialEkfCbBias = -0.10,
+    double InitialCcMolPerL = 0.20,
+    double InitialCdMolPerL = 0.05,
+    double InitialTempC = 58.0,
+    double InitialJacketTempC = 35.0,
+    double InitialEkfCaBias = 0.25,
+    double InitialEkfCbBias = -0.15,
     int RngSeed = 42,
     SpEkfConfig? EkfConfig = null,
     SpNmpcConfig? NmpcConfig = null
@@ -150,11 +151,12 @@ public sealed record SpClosedLoopComparisonResult(
 );
 
 /// <summary>
-/// Shared valve-actuator physics and RK4 helper utilities backed by <see cref="NativeReactorCoreInterop"/>.
+/// Shared valve-actuator physics and substepped RK4 helper utilities backed by <see cref="NativeReactorCoreInterop"/>.
 /// </summary>
 public static class SeriesParallelActuatorModel
 {
     public const double KelvinOffset = 273.15;
+    public const double MaxRk4SubstepMin = 0.015;
 
     /// <summary>
     /// Maps a control valve command [0..100 %] to jacket heat-transfer coefficient (UA)
@@ -175,12 +177,65 @@ public static class SeriesParallelActuatorModel
 
     public static void ClampState(ref double ca, ref double cb, ref double cc, ref double cd, ref double tempK, ref double tempJK)
     {
-        if (ca < 0.0 || double.IsNaN(ca)) ca = 0.0;
-        if (cb < 0.0 || double.IsNaN(cb)) cb = 0.0;
-        if (cc < 0.0 || double.IsNaN(cc)) cc = 0.0;
-        if (cd < 0.0 || double.IsNaN(cd)) cd = 0.0;
-        tempK = double.IsNaN(tempK) ? 350.0 : Math.Clamp(tempK, 200.0, 1500.0);
-        tempJK = double.IsNaN(tempJK) ? 300.0 : Math.Clamp(tempJK, 200.0, 1500.0);
+        if (ca < 0.0 || double.IsNaN(ca) || double.IsInfinity(ca)) ca = 0.0;
+        if (cb < 0.0 || double.IsNaN(cb) || double.IsInfinity(cb)) cb = 0.0;
+        if (cc < 0.0 || double.IsNaN(cc) || double.IsInfinity(cc)) cc = 0.0;
+        if (cd < 0.0 || double.IsNaN(cd) || double.IsInfinity(cd)) cd = 0.0;
+        tempK = double.IsNaN(tempK) || double.IsInfinity(tempK) ? 450.0 : Math.Clamp(tempK, 200.0, 900.0);
+        tempJK = double.IsNaN(tempJK) || double.IsInfinity(tempJK) ? 350.0 : Math.Clamp(tempJK, 200.0, 900.0);
+    }
+
+    public static void StepRk4Substepped(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double tempK,
+        ref double tempJK,
+        double dtMin)
+    {
+        int nSub = Math.Max(1, (int)Math.Ceiling(dtMin / MaxRk4SubstepMin));
+        double h = dtMin / nSub;
+        for (int s = 0; s < nSub; s++)
+        {
+            NativeReactorCoreInterop.StepSeriesParallelRk4(
+                in p, ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK, h);
+            ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK);
+        }
+    }
+
+    public static void StepDetailedSubstepped(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double tempK,
+        ref double tempJK,
+        double dtMin,
+        double runawayThresholdK,
+        out CstrSeriesParallelStateFFI detailed)
+    {
+        int nSub = Math.Max(1, (int)Math.Ceiling(dtMin / MaxRk4SubstepMin));
+        double h = dtMin / nSub;
+        for (int s = 0; s < nSub - 1; s++)
+        {
+            NativeReactorCoreInterop.StepSeriesParallelRk4(
+                in p, ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK, h);
+            ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK);
+        }
+
+        NativeReactorCoreInterop.StepSeriesParallelDetailed(
+            in p, ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK, h, runawayThresholdK, out detailed);
+        ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK);
+        ca = detailed.CaMolPerL;
+        cb = detailed.CbMolPerL;
+        cc = detailed.CcMolPerL;
+        cd = detailed.CdMolPerL;
+        tempK = detailed.TempKelvin;
+        tempJK = detailed.JacketTempKelvin;
+        ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK);
     }
 }
 
@@ -226,7 +281,7 @@ public sealed class SeriesParallelEkf6
         _x[4] = Math.Clamp(tempK0, 200.0, 1500.0);
         _x[5] = Math.Clamp(jacketTempK0, 200.0, 1500.0);
 
-        double[] p0Diag = [0.04, 0.04, 0.01, 0.01, 1.0, 1.0];
+        double[] p0Diag = [0.15, 0.12, 0.08, 0.04, 0.25, 0.25];
         for (int i = 0; i < StateDim; i++)
             _p[i, i] = p0Diag[i];
 
@@ -271,13 +326,17 @@ public sealed class SeriesParallelEkf6
             _jacTj[negIdx] = _x[5] - (j == 5 ? FiniteDiffEps[j] : 0.0);
         }
 
-        // Propagate nominal state and 12 Jacobian perturbations through unified FFI RK4 engine
+        // Propagate nominal state and 12 Jacobian perturbations through unified FFI RK4 engine (substepped)
         double ca = _x[0], cb = _x[1], cc = _x[2], cd = _x[3], t = _x[4], tj = _x[5];
-        NativeReactorCoreInterop.StepSeriesParallelRk4(in pAct, ref ca, ref cb, ref cc, ref cd, ref t, ref tj, dtMin);
-        SeriesParallelActuatorModel.ClampState(ref ca, ref cb, ref cc, ref cd, ref t, ref tj);
-
-        NativeReactorCoreInterop.StepSeriesParallelBatchRk4(
-            in pAct, _jacCa, _jacCb, _jacCc, _jacCd, _jacT, _jacTj, dtMin);
+        int nSub = Math.Max(1, (int)Math.Ceiling(dtMin / SeriesParallelActuatorModel.MaxRk4SubstepMin));
+        double h = dtMin / nSub;
+        for (int s = 0; s < nSub; s++)
+        {
+            NativeReactorCoreInterop.StepSeriesParallelRk4(in pAct, ref ca, ref cb, ref cc, ref cd, ref t, ref tj, h);
+            SeriesParallelActuatorModel.ClampState(ref ca, ref cb, ref cc, ref cd, ref t, ref tj);
+            NativeReactorCoreInterop.StepSeriesParallelBatchRk4(
+                in pAct, _jacCa, _jacCb, _jacCc, _jacCd, _jacT, _jacTj, h);
+        }
 
         var phi = new double[StateDim, StateDim];
         for (int j = 0; j < StateDim; j++)
@@ -592,13 +651,13 @@ public sealed class SeriesParallelEconomicNmpc
             double uCurr = uBlocks[blockIdx];
             var pAct = SeriesParallelActuatorModel.ApplyValveCommand(in baseParams, uCurr);
 
-            NativeReactorCoreInterop.StepSeriesParallelRk4(
-                in pAct, ref ca, ref cb, ref cc, ref cd, ref tempK, ref jacketTempK, _cfg.SampleTimeMin);
-            SeriesParallelActuatorModel.ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref jacketTempK);
+            SeriesParallelActuatorModel.StepRk4Substepped(
+                in pAct, ref ca, ref cb, ref cc, ref cd, ref tempK, ref jacketTempK, _cfg.PredictionStepMin);
 
             if (tempK > peakTempK)
                 peakTempK = tempK;
 
+            double uNorm = uCurr / 100.0;
             double duNorm = (uCurr - uPrev) / 100.0;
             uPrev = uCurr;
 
@@ -609,6 +668,7 @@ public sealed class SeriesParallelEconomicNmpc
                 : -_cfg.WeightCbEconomic * cb;
 
             double byproductCost = _cfg.WeightByproduct * (cc + cd);
+            double effortCost = _cfg.WeightUtilityEffort * uNorm * uNorm;
             double slewCost = _cfg.WeightDeltaU * duNorm * duNorm;
 
             double tempViolationSoft = Math.Max(0.0, tempK - softLimitK);
@@ -616,7 +676,7 @@ public sealed class SeriesParallelEconomicNmpc
             double thermalCost = _cfg.WeightTempSoft * tempViolationSoft * tempViolationSoft
                                + _cfg.WeightTempHard * tempViolationHard * tempViolationHard;
 
-            totalCost += terminalWeight * (stageCbCost + byproductCost + thermalCost) + slewCost;
+            totalCost += terminalWeight * (stageCbCost + byproductCost + thermalCost) + effortCost + slewCost;
         }
 
         return (totalCost, peakTempK, cb);
@@ -636,7 +696,7 @@ public static class SeriesParallelClosedLoopSimulator
         double dt = Math.Clamp(sc.SampleTimeMin, 0.005, 1.0);
 
         var ekfCfg = sc.EkfConfig ?? new SpEkfConfig();
-        var nmpcCfg = (sc.NmpcConfig ?? new SpNmpcConfig()) with { SampleTimeMin = dt };
+        var nmpcCfg = sc.NmpcConfig ?? new SpNmpcConfig();
         double maxSafeTempK = nmpcCfg.MaxSafeTempK;
         double maxSafeTempC = maxSafeTempK - SeriesParallelActuatorModel.KelvinOffset;
 
@@ -692,7 +752,7 @@ public static class SeriesParallelClosedLoopSimulator
 
             // Open-loop baseline holds initial valve command
             var olActParams = SeriesParallelActuatorModel.ApplyValveCommand(in baseParams, sc.InitialValvePct);
-            NativeReactorCoreInterop.StepSeriesParallelDetailed(
+            SeriesParallelActuatorModel.StepDetailedSubstepped(
                 in olActParams,
                 ref olCa,
                 ref olCb,
@@ -713,7 +773,7 @@ public static class SeriesParallelClosedLoopSimulator
 
             double clValve = nmpcAction.ValveCommandPct;
             var clActParams = SeriesParallelActuatorModel.ApplyValveCommand(in baseParams, clValve);
-            NativeReactorCoreInterop.StepSeriesParallelDetailed(
+            SeriesParallelActuatorModel.StepDetailedSubstepped(
                 in clActParams,
                 ref clCa,
                 ref clCb,
