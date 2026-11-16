@@ -117,4 +117,46 @@ public class SeriesParallelControlTests
             prevValve = pt.ClosedLoopValvePct;
         }
     }
+
+    [Fact]
+    public void SeriesParallelClosedLoop_WithStiffRos3Solver_MaintainsSafeBoundedTrajectory()
+    {
+        var scenario = new SpClosedLoopScenario(
+            TotalSteps: 80,
+            SampleTimeMin: 0.05,
+            InitialValvePct: 15.0,
+            NominalFeedTempC: 51.85,
+            DisturbanceFeedTempC: 76.85,
+            DisturbanceStep: 12,
+            UseStiffRos3Solver: true);
+
+        SpClosedLoopComparisonResult result = SeriesParallelClosedLoopSimulator.RunComparison(scenario);
+
+        Assert.Equal(80, result.Trajectory.Count);
+        Assert.True(result.OpenLoopRunawayTriggered);
+        Assert.False(result.ClosedLoopRunawayTriggered);
+        Assert.True(result.ClosedLoopPeakTempC < result.MaxSafeTempC);
+        Assert.True(result.ClosedLoopFinalCbMolPerL > result.OpenLoopFinalCbMolPerL);
+        Assert.True(result.EkfMeanCbRmseMolPerL < 0.06);
+        Assert.Equal(0, result.FaultCount);
+    }
+
+    [Fact]
+    public void SeriesParallelSolverBenchmark_Ros3RemainsStableWhenExplicitRk4FailsAtLargeStiffStep()
+    {
+        SpSolverBenchmarkResult bench = SeriesParallelClosedLoopSimulator.RunSolverStiffBenchmark(
+            new SpSolverBenchmarkScenario(
+                Steps: 40,
+                StepDtMin: 0.08,
+                InitialTempC: 115.0,
+                InitialJacketTempC: 75.0,
+                ValvePct: 5.0));
+
+        Assert.Equal(40, bench.Trajectory.Count);
+        Assert.True(bench.Ros3RemainedStable, $"ROS3L should stay bounded, got peak {bench.Ros3PeakTempC} C");
+        Assert.True(bench.Ros3PeakTempC > 115.0 && bench.Ros3PeakTempC < 450.0,
+            $"Unexpected ROS3L peak temperature: {bench.Ros3PeakTempC} C");
+        Assert.True(bench.Rk4BlowupDetected,
+            $"Expected raw explicit RK4 at dt=0.08 min to diverge/blow up, peak was {bench.Rk4PeakTempC} C");
+    }
 }

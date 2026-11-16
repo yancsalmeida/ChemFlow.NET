@@ -1149,7 +1149,8 @@ app.MapPost("/api/telemetry/cstr/series-parallel/closed-loop", (SeriesParallelCl
         DisturbanceStep: Math.Clamp(req.DisturbanceStep, 0, 599),
         CaFeedMolPerL: Math.Clamp(req.CaFeedMolPerL, 0.1, 5.0),
         JacketTInC: Math.Clamp(req.JacketTInC, -10.0, 100.0),
-        NmpcConfig: nmpcCfg
+        NmpcConfig: nmpcCfg,
+        UseStiffRos3Solver: req.UseStiffRos3Solver
     );
 
     SpClosedLoopComparisonResult result = SeriesParallelClosedLoopSimulator.RunComparison(scenario);
@@ -1205,6 +1206,49 @@ app.MapPost("/api/telemetry/cstr/series-parallel/closed-loop", (SeriesParallelCl
     ));
 })
 .WithName("RunSeriesParallelClosedLoopComparison")
+.WithOpenApi();
+
+app.MapPost("/api/telemetry/cstr/series-parallel/solver-benchmark", (SeriesParallelSolverBenchmarkRequest? request) =>
+{
+    var req = request ?? new SeriesParallelSolverBenchmarkRequest();
+    var scenario = new SpSolverBenchmarkScenario(
+        Steps: Math.Clamp(req.Steps, 5, 500),
+        StepDtMin: Math.Clamp(req.StepDtMin, 0.01, 0.5),
+        InitialTempC: Math.Clamp(req.InitialTempC, 20.0, 260.0),
+        InitialJacketTempC: Math.Clamp(req.InitialJacketTempC, 0.0, 200.0),
+        JacketTInC: Math.Clamp(req.JacketTInC, -10.0, 100.0),
+        InitialCaMolPerL: Math.Clamp(req.InitialCaMolPerL, 0.1, 5.0),
+        ValvePct: Math.Clamp(req.ValvePct, 0.0, 100.0)
+    );
+
+    SpSolverBenchmarkResult bench = SeriesParallelClosedLoopSimulator.RunSolverStiffBenchmark(scenario);
+
+    return Results.Ok(new SeriesParallelSolverBenchmarkResponse(
+        EngineMode: bench.EngineMode,
+        Steps: bench.Steps,
+        StepDtMin: bench.StepDtMin,
+        Rk4ElapsedMs: bench.Rk4ElapsedMs,
+        Ros3ElapsedMs: bench.Ros3ElapsedMs,
+        Rk4PeakTempC: bench.Rk4PeakTempC,
+        Ros3PeakTempC: bench.Ros3PeakTempC,
+        Rk4FinalCbMolPerL: bench.Rk4FinalCbMolPerL,
+        Ros3FinalCbMolPerL: bench.Ros3FinalCbMolPerL,
+        Rk4BlowupDetected: bench.Rk4BlowupDetected,
+        Ros3RemainedStable: bench.Ros3RemainedStable,
+        MaxTempDeltaC: bench.MaxTempDeltaC,
+        Trajectory: bench.Trajectory.Select(pt => new SeriesParallelSolverBenchmarkPointDto(
+            Step: pt.Step,
+            TimeMin: pt.TimeMin,
+            Rk4TempC: pt.Rk4TempC,
+            Ros3TempC: pt.Ros3TempC,
+            Rk4CbMolPerL: pt.Rk4CbMolPerL,
+            Ros3CbMolPerL: pt.Ros3CbMolPerL,
+            Rk4DivergedOrClipped: pt.Rk4DivergedOrClipped,
+            Ros3Bounded: pt.Ros3Bounded
+        )).ToArray()
+    ));
+})
+.WithName("RunSeriesParallelSolverBenchmark")
 .WithOpenApi();
 
 app.MapGet("/api/supervisory/modbus/status", (SupervisoryModbusControllerService supervisory) =>

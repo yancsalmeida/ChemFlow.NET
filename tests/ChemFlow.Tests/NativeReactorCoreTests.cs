@@ -301,4 +301,57 @@ public class NativeReactorCoreTests
         double diffConversion = Math.Abs(cstrAdaptive.FractionalConversion - cstrFixed.FractionalConversion);
         Assert.True(diffConversion < 0.05, $"Conversions diverge: adaptive={cstrAdaptive.FractionalConversion}, fixed={cstrFixed.FractionalConversion}");
     }
+
+    [Fact]
+    public void NativeInterop_StepStiffRos3_SingleReaction_MatchesFineRk4AndStaysBounded()
+    {
+        CstrParamsFFI p = NativeReactorCoreInterop.GetDefaultParameters();
+        double caRos = 1.0, tRos = 350.0;
+        double caRk = 1.0, tRk = 350.0;
+
+        for (int i = 0; i < 10; i++)
+        {
+            Assert.Equal(0, NativeReactorCoreInterop.StepStiffRos3(in p, ref caRos, ref tRos, 0.01));
+            for (int s = 0; s < 10; s++)
+            {
+                Assert.Equal(0, NativeReactorCoreInterop.StepRk4(in p, ref caRk, ref tRk, 0.001));
+            }
+        }
+
+        Assert.InRange(caRos, 0.0, 1.0);
+        Assert.True(Math.Abs(caRos - caRk) < 1e-3, $"Single-CSTR ROS3L Ca={caRos} vs fine RK4 Ca={caRk}");
+        Assert.True(Math.Abs(tRos - tRk) < 0.05, $"Single-CSTR ROS3L T={tRos} vs fine RK4 T={tRk}");
+    }
+
+    [Fact]
+    public void NativeInterop_StepSeriesParallelStiffDetailed_SurvivesSevereStiffRunawayWithLargeDt()
+    {
+        CstrSeriesParallelParamsFFI p = NativeReactorCoreInterop.GetSeriesParallelDefaultParameters();
+        p.UaJPerMinK = 60_000.0;
+        p.JacketFlowLPerMin = 20.0;
+
+        double ca = 1.0, cb = 0.0, cc = 0.0, cd = 0.0;
+        double tempK = 388.15;
+        double tempJK = 348.15;
+
+        for (int i = 0; i < 40; i++)
+        {
+            int rc = NativeReactorCoreInterop.StepSeriesParallelStiffDetailed(
+                in p, ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK,
+                dt: 0.08, runawayThresholdK: 420.0, out CstrSeriesParallelStateFFI state);
+            Assert.Equal(0, rc);
+            Assert.False(double.IsNaN(tempK) || double.IsInfinity(tempK));
+            Assert.InRange(tempK, 200.0, 1000.0);
+            Assert.InRange(ca, 0.0, 1.5);
+            Assert.InRange(cb, 0.0, 1.5);
+            Assert.Equal(tempK, state.TempKelvin, precision: 6);
+        }
+
+        double caRosFixed = 1.0, cbRosFixed = 0.0, ccRosFixed = 0.0, cdRosFixed = 0.0;
+        double tRosFixed = 350.0, tjRosFixed = 310.0;
+        Assert.Equal(0, NativeReactorCoreInterop.StepSeriesParallelStiffRos3(
+            in p, ref caRosFixed, ref cbRosFixed, ref ccRosFixed, ref cdRosFixed, ref tRosFixed, ref tjRosFixed, 0.02));
+        Assert.InRange(caRosFixed, 0.0, 1.0);
+        Assert.True(cbRosFixed > 0.0);
+    }
 }

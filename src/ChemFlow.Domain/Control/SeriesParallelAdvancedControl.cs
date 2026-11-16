@@ -88,7 +88,8 @@ public sealed record SpClosedLoopScenario(
     double InitialEkfCbBias = -0.15,
     int RngSeed = 42,
     SpEkfConfig? EkfConfig = null,
-    SpNmpcConfig? NmpcConfig = null
+    SpNmpcConfig? NmpcConfig = null,
+    bool UseStiffRos3Solver = false
 );
 
 /// <summary>
@@ -148,6 +149,52 @@ public sealed record SpClosedLoopComparisonResult(
     double MaxNis,
     int FaultCount,
     IReadOnlyList<SpClosedLoopStepPoint> Trajectory
+);
+
+/// <summary>
+/// Input configuration for benchmarking explicit RK4 vs L-stable 3rd-order Rosenbrock (ROS3L) under stiff thermal runaway.
+/// </summary>
+public sealed record SpSolverBenchmarkScenario(
+    int Steps = 40,
+    double StepDtMin = 0.08,
+    double InitialTempC = 115.0,
+    double InitialJacketTempC = 75.0,
+    double JacketTInC = 21.85,
+    double InitialCaMolPerL = 1.0,
+    double ValvePct = 5.0
+);
+
+/// <summary>
+/// One synchronized comparison step between Explicit RK4 and L-stable ROS3L(2).
+/// </summary>
+public sealed record SpSolverBenchmarkPoint(
+    int Step,
+    double TimeMin,
+    double Rk4TempC,
+    double Ros3TempC,
+    double Rk4CbMolPerL,
+    double Ros3CbMolPerL,
+    bool Rk4DivergedOrClipped,
+    bool Ros3Bounded
+);
+
+/// <summary>
+/// Quantitative comparison between explicit RK4 and adaptive L-stable ROS3L(2) with exact 6x6 analytical Jacobian.
+/// </summary>
+public sealed record SpSolverBenchmarkResult(
+    string EngineMode,
+    int Steps,
+    double StepDtMin,
+    double Rk4ElapsedMs,
+    double Ros3ElapsedMs,
+    double Rk4PeakTempC,
+    double Ros3PeakTempC,
+    double Rk4FinalCbMolPerL,
+    double Ros3FinalCbMolPerL,
+    bool Rk4BlowupDetected,
+    bool Ros3RemainedStable,
+    double MaxTempDeltaC,
+    IReadOnlyList<SpSolverBenchmarkPoint> Trajectory
 );
 
 /// <summary>
@@ -235,6 +282,26 @@ public static class SeriesParallelActuatorModel
         cd = detailed.CdMolPerL;
         tempK = detailed.TempKelvin;
         tempJK = detailed.JacketTempKelvin;
+        ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK);
+    }
+
+    public static void StepStiffDetailed(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double tempK,
+        ref double tempJK,
+        double dtMin,
+        double runawayThresholdK,
+        out CstrSeriesParallelStateFFI detailed,
+        double rtol = 1e-5,
+        double atol = 1e-7)
+    {
+        NativeReactorCoreInterop.StepSeriesParallelStiffDetailed(
+            in p, ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK,
+            dtMin, runawayThresholdK, out detailed, rtol, atol);
         ClampState(ref ca, ref cb, ref cc, ref cd, ref tempK, ref tempJK);
     }
 }
@@ -752,17 +819,35 @@ public static class SeriesParallelClosedLoopSimulator
 
             // Open-loop baseline holds initial valve command
             var olActParams = SeriesParallelActuatorModel.ApplyValveCommand(in baseParams, sc.InitialValvePct);
-            SeriesParallelActuatorModel.StepDetailedSubstepped(
-                in olActParams,
-                ref olCa,
-                ref olCb,
-                ref olCc,
-                ref olCd,
-                ref olT,
-                ref olTj,
-                dt,
-                maxSafeTempK,
-                out var olDetailed);
+            CstrSeriesParallelStateFFI olDetailed;
+            if (sc.UseStiffRos3Solver)
+            {
+                SeriesParallelActuatorModel.StepStiffDetailed(
+                    in olActParams,
+                    ref olCa,
+                    ref olCb,
+                    ref olCc,
+                    ref olCd,
+                    ref olT,
+                    ref olTj,
+                    dt,
+                    maxSafeTempK,
+                    out olDetailed);
+            }
+            else
+            {
+                SeriesParallelActuatorModel.StepDetailedSubstepped(
+                    in olActParams,
+                    ref olCa,
+                    ref olCb,
+                    ref olCc,
+                    ref olCd,
+                    ref olT,
+                    ref olTj,
+                    dt,
+                    maxSafeTempK,
+                    out olDetailed);
+            }
 
             // Closed-loop EKF predict -> noisy thermocouple update -> e-NMPC action -> plant step
             var est = ekf.State;
@@ -773,17 +858,35 @@ public static class SeriesParallelClosedLoopSimulator
 
             double clValve = nmpcAction.ValveCommandPct;
             var clActParams = SeriesParallelActuatorModel.ApplyValveCommand(in baseParams, clValve);
-            SeriesParallelActuatorModel.StepDetailedSubstepped(
-                in clActParams,
-                ref clCa,
-                ref clCb,
-                ref clCc,
-                ref clCd,
-                ref clT,
-                ref clTj,
-                dt,
-                maxSafeTempK,
-                out var clDetailed);
+            CstrSeriesParallelStateFFI clDetailed;
+            if (sc.UseStiffRos3Solver)
+            {
+                SeriesParallelActuatorModel.StepStiffDetailed(
+                    in clActParams,
+                    ref clCa,
+                    ref clCb,
+                    ref clCc,
+                    ref clCd,
+                    ref clT,
+                    ref clTj,
+                    dt,
+                    maxSafeTempK,
+                    out clDetailed);
+            }
+            else
+            {
+                SeriesParallelActuatorModel.StepDetailedSubstepped(
+                    in clActParams,
+                    ref clCa,
+                    ref clCb,
+                    ref clCc,
+                    ref clCd,
+                    ref clT,
+                    ref clTj,
+                    dt,
+                    maxSafeTempK,
+                    out clDetailed);
+            }
 
             ekf.Predict(in baseParams, clValve, dt);
             double measT = clT + NextGaussian(rng) * ekfCfg.SigmaTempMeasK;
@@ -862,6 +965,122 @@ public static class SeriesParallelClosedLoopSimulator
             EkfMeanCbRmseMolPerL: Math.Round(Math.Sqrt(sumSqCbErr / totalSteps), 4),
             MaxNis: Math.Round(maxNis, 3),
             FaultCount: faultCount,
+            Trajectory: points
+        );
+    }
+
+    /// <summary>
+    /// Benchmarks explicit single-step RK4 against adaptive L-stable ROS3L(2) (exact 6x6 analytical Jacobian)
+    /// under severe exothermic thermal runaway and large step size.
+    /// </summary>
+    public static SpSolverBenchmarkResult RunSolverStiffBenchmark(SpSolverBenchmarkScenario? scenario = null)
+    {
+        var sc = scenario ?? new SpSolverBenchmarkScenario();
+        int steps = Math.Clamp(sc.Steps, 5, 500);
+        double dt = Math.Clamp(sc.StepDtMin, 0.01, 0.5);
+
+        var p = NativeReactorCoreInterop.GetSeriesParallelDefaultParameters();
+        p.CaFeedMolPerL = Math.Clamp(sc.InitialCaMolPerL, 0.1, 5.0);
+        p.JacketTInKelvin = sc.JacketTInC + SeriesParallelActuatorModel.KelvinOffset;
+        p = SeriesParallelActuatorModel.ApplyValveCommand(in p, sc.ValvePct);
+
+        double rkCa = p.CaFeedMolPerL, rkCb = 0.0, rkCc = 0.0, rkCd = 0.0;
+        double rkT = sc.InitialTempC + SeriesParallelActuatorModel.KelvinOffset;
+        double rkTj = sc.InitialJacketTempC + SeriesParallelActuatorModel.KelvinOffset;
+
+        double rosCa = rkCa, rosCb = 0.0, rosCc = 0.0, rosCd = 0.0;
+        double rosT = rkT, rosTj = rkTj;
+
+        var rkTrajT = new double[steps];
+        var rkTrajCb = new double[steps];
+        var rkDiverged = new bool[steps];
+        bool rk4Blowup = false;
+
+        var swRk4 = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < steps; i++)
+        {
+            if (!rk4Blowup)
+            {
+                NativeReactorCoreInterop.StepSeriesParallelRk4(
+                    in p, ref rkCa, ref rkCb, ref rkCc, ref rkCd, ref rkT, ref rkTj, dt);
+                bool bad = double.IsNaN(rkT) || double.IsInfinity(rkT)
+                    || double.IsNaN(rkCb) || double.IsInfinity(rkCb)
+                    || rkT > 2000.0 || rkT < 150.0 || rkCb < -0.05;
+                if (bad)
+                {
+                    rk4Blowup = true;
+                    rkT = 2000.0;
+                    rkCb = 0.0;
+                }
+            }
+            rkDiverged[i] = rk4Blowup;
+            rkTrajT[i] = rkT - SeriesParallelActuatorModel.KelvinOffset;
+            rkTrajCb[i] = Math.Clamp(rkCb, 0.0, 5.0);
+        }
+        swRk4.Stop();
+
+        var rosTrajT = new double[steps];
+        var rosTrajCb = new double[steps];
+        var rosBounded = new bool[steps];
+        bool rosStable = true;
+
+        var swRos = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < steps; i++)
+        {
+            int rc = NativeReactorCoreInterop.StepSeriesParallelStiffDetailed(
+                in p, ref rosCa, ref rosCb, ref rosCc, ref rosCd, ref rosT, ref rosTj,
+                dt, 420.0, out _, 1e-5, 1e-7);
+            bool ok = rc == 0
+                && !double.IsNaN(rosT) && !double.IsInfinity(rosT)
+                && rosT >= 200.0 && rosT <= 1200.0
+                && !double.IsNaN(rosCb) && rosCb >= 0.0;
+            if (!ok) rosStable = false;
+            rosBounded[i] = ok;
+            rosTrajT[i] = rosT - SeriesParallelActuatorModel.KelvinOffset;
+            rosTrajCb[i] = Math.Clamp(rosCb, 0.0, 5.0);
+        }
+        swRos.Stop();
+
+        var points = new List<SpSolverBenchmarkPoint>(steps);
+        double rkPeak = double.MinValue;
+        double rosPeak = double.MinValue;
+        double maxDelta = 0.0;
+
+        for (int i = 0; i < steps; i++)
+        {
+            rkPeak = Math.Max(rkPeak, rkTrajT[i]);
+            rosPeak = Math.Max(rosPeak, rosTrajT[i]);
+            maxDelta = Math.Max(maxDelta, Math.Abs(rkTrajT[i] - rosTrajT[i]));
+
+            points.Add(new SpSolverBenchmarkPoint(
+                Step: i + 1,
+                TimeMin: Math.Round((i + 1) * dt, 4),
+                Rk4TempC: Math.Round(rkTrajT[i], 2),
+                Ros3TempC: Math.Round(rosTrajT[i], 2),
+                Rk4CbMolPerL: Math.Round(rkTrajCb[i], 4),
+                Ros3CbMolPerL: Math.Round(rosTrajCb[i], 4),
+                Rk4DivergedOrClipped: rkDiverged[i],
+                Ros3Bounded: rosBounded[i]
+            ));
+        }
+
+        string engineMode = NativeReactorCoreInterop.IsNativeAvailable
+            ? $"Native C11 ROS3L ({NativeReactorCoreInterop.VersionString})"
+            : "Managed C# ROS3L Fallback";
+
+        return new SpSolverBenchmarkResult(
+            EngineMode: engineMode,
+            Steps: steps,
+            StepDtMin: Math.Round(dt, 4),
+            Rk4ElapsedMs: Math.Round(swRk4.Elapsed.TotalMilliseconds, 3),
+            Ros3ElapsedMs: Math.Round(swRos.Elapsed.TotalMilliseconds, 3),
+            Rk4PeakTempC: Math.Round(rkPeak, 2),
+            Ros3PeakTempC: Math.Round(rosPeak, 2),
+            Rk4FinalCbMolPerL: Math.Round(rkTrajCb[^1], 4),
+            Ros3FinalCbMolPerL: Math.Round(rosTrajCb[^1], 4),
+            Rk4BlowupDetected: rk4Blowup,
+            Ros3RemainedStable: rosStable,
+            MaxTempDeltaC: Math.Round(maxDelta, 2),
             Trajectory: points
         );
     }

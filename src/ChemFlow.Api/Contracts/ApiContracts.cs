@@ -432,7 +432,8 @@ public sealed record SeriesParallelClosedLoopRequest(
     double WeightCbEconomic = 60.0,
     double WeightByproduct = 10.0,
     double? TargetCbMolPerL = null,
-    double MaxSlewPerStepPct = 35.0
+    double MaxSlewPerStepPct = 35.0,
+    bool UseStiffRos3Solver = false
 );
 
 public sealed record SeriesParallelClosedLoopPointDto(
@@ -483,6 +484,43 @@ public sealed record SeriesParallelClosedLoopResponse(
     double MaxNis,
     int FaultCount,
     IReadOnlyList<SeriesParallelClosedLoopPointDto> Trajectory
+);
+
+public sealed record SeriesParallelSolverBenchmarkRequest(
+    int Steps = 40,
+    double StepDtMin = 0.08,
+    double InitialTempC = 115.0,
+    double InitialJacketTempC = 75.0,
+    double JacketTInC = 21.85,
+    double InitialCaMolPerL = 1.0,
+    double ValvePct = 5.0
+);
+
+public sealed record SeriesParallelSolverBenchmarkPointDto(
+    int Step,
+    double TimeMin,
+    double Rk4TempC,
+    double Ros3TempC,
+    double Rk4CbMolPerL,
+    double Ros3CbMolPerL,
+    bool Rk4DivergedOrClipped,
+    bool Ros3Bounded
+);
+
+public sealed record SeriesParallelSolverBenchmarkResponse(
+    string EngineMode,
+    int Steps,
+    double StepDtMin,
+    double Rk4ElapsedMs,
+    double Ros3ElapsedMs,
+    double Rk4PeakTempC,
+    double Ros3PeakTempC,
+    double Rk4FinalCbMolPerL,
+    double Ros3FinalCbMolPerL,
+    bool Rk4BlowupDetected,
+    bool Ros3RemainedStable,
+    double MaxTempDeltaC,
+    IReadOnlyList<SeriesParallelSolverBenchmarkPointDto> Trajectory
 );
 
 public sealed record SupervisoryModbusStartRequest(

@@ -456,6 +456,26 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.Contains("btnSilStart", html);
         Assert.Contains("inpSilModbusHost", html);
     }
+
+    [Fact]
+    public async Task SeriesParallelSolverBenchmark_Endpoint_ComparesRk4VsStiffRos3AndExposesUiButton()
+    {
+        HttpResponseMessage response = await _client.PostAsJsonAsync(
+            "/api/telemetry/cstr/series-parallel/solver-benchmark",
+            new SeriesParallelSolverBenchmarkRequest(Steps: 40, StepDtMin: 0.08));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        SeriesParallelSolverBenchmarkResponse? bench =
+            await response.Content.ReadFromJsonAsync<SeriesParallelSolverBenchmarkResponse>();
+        Assert.NotNull(bench);
+        Assert.Equal(40, bench.Trajectory.Count);
+        Assert.True(bench.Ros3RemainedStable);
+        Assert.True(bench.Rk4BlowupDetected);
+        Assert.True(bench.Ros3PeakTempC < 450.0);
+
+        string html = await _client.GetStringAsync("/");
+        Assert.Contains("btnRunSolverBenchmark", html);
+    }
 }
 
 

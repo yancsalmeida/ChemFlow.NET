@@ -1049,6 +1049,83 @@ public static class NativeReactorCoreInterop
     }
 
     /// <summary>
+    /// Advances single-reaction CSTR state using the L-stable 3rd-order Rosenbrock stiff solver (ROS3L) with analytical Jacobian.
+    /// </summary>
+    public static int StepStiffRos3(
+        in CstrParamsFFI p,
+        ref double ca,
+        ref double temp,
+        double dt)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_step_ros3(in p, ref ca, ref temp, dt);
+            }
+            catch { }
+        }
+
+        return ManagedStepStiffRos3(in p, ref ca, ref temp, dt);
+    }
+
+    /// <summary>
+    /// Advances 6-variable series-parallel CSTR state using a single fixed L-stable ROS3L step (exact 6x6 Jacobian).
+    /// </summary>
+    public static int StepSeriesParallelStiffRos3(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double temp,
+        ref double tempJ,
+        double dt)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_step_ros3(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt);
+            }
+            catch { }
+        }
+
+        return ManagedSeriesParallelStepRos3(in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt);
+    }
+
+    /// <summary>
+    /// Advances 6-variable series-parallel CSTR state using adaptive embedded ROS3L(2) stiff integration and computes detailed metrics.
+    /// </summary>
+    public static int StepSeriesParallelStiffDetailed(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca,
+        ref double cb,
+        ref double cc,
+        ref double cd,
+        ref double temp,
+        ref double tempJ,
+        double dt,
+        double runawayThresholdK,
+        out CstrSeriesParallelStateFFI state,
+        double rtol = 1e-5,
+        double atol = 1e-7)
+    {
+        if (IsNativeAvailable)
+        {
+            try
+            {
+                return NativeMethods.reactor_cstr_series_parallel_step_ros3_detailed(
+                    in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt, rtol, atol, runawayThresholdK, out state);
+            }
+            catch { }
+        }
+
+        return ManagedSeriesParallelStepRos3Detailed(
+            in p, ref ca, ref cb, ref cc, ref cd, ref temp, ref tempJ, dt, rtol, atol, runawayThresholdK, out state);
+    }
+
+    /// <summary>
     /// Advances an ensemble of N series-parallel reactors simultaneously via SIMD AVX-512/AVX2 vectorization.
     /// </summary>
     public static int StepSeriesParallelBatchRk4(
@@ -1365,6 +1442,282 @@ public static class NativeReactorCoreInterop
         return 0;
     }
 
+    private const double Ros3Gamma = 0.435866521508458999416;
+    private const double Ros3A21   = 2.29428036027904181;
+    private const double Ros3C21   = -7.55800273184117177;
+    private const double Ros3C31   = 12.22566466169111443;
+    private const double Ros3C32   = 5.74019720866211269;
+    private const double Ros3M1    = 0.75157658521103743;
+    private const double Ros3M2    = -0.57431947473051181;
+    private const double Ros3M3    = 0.38238006004650693;
+    private const double Ros3E1    = -0.76819871711192689;
+    private const double Ros3E2    = -0.23673864922848881;
+    private const double Ros3E3    = 0.38238006004650693;
+
+    private static int ManagedStepStiffRos3(in CstrParamsFFI p, ref double ca, ref double tempK, double dt)
+    {
+        if (dt <= 0.0 || p.VolumeLiters <= 0.0) return -1;
+        double caV = Math.Max(0.0, ca);
+        double tV = Math.Clamp(tempK, 50.0, 2500.0);
+
+        double s = p.VolumetricFlowLPerMin / p.VolumeLiters;
+        double cg = p.DeltaHJPerMol / p.RhoCpJPerLK;
+        double cr = p.UaJPerMinK / (p.VolumeLiters * p.RhoCpJPerLK);
+        double k = p.K0PerMin * Math.Exp(-p.EaOverRKelvin / tV);
+        double drDt = caV * k * p.EaOverRKelvin / (tV * tV);
+
+        double invGh = 1.0 / (Ros3Gamma * dt);
+        double w00 = invGh - (-s - k);
+        double w01 = drDt;
+        double w10 = -(cg * k);
+        double w11 = invGh - (-s - cr + cg * drDt);
+        double det = w00 * w11 - w01 * w10;
+        if (Math.Abs(det) < 1e-15 || !double.IsFinite(det)) return -1;
+        double invDet = 1.0 / det;
+
+        CstrParamsFFI prm = p;
+        void Rhs2(double c, double t, out double f0, out double f1)
+        {
+            double cv = Math.Max(0.0, c);
+            double tv = Math.Clamp(t, 50.0, 2500.0);
+            double r = prm.K0PerMin * Math.Exp(-prm.EaOverRKelvin / tv) * cv;
+            f0 = s * (prm.CaFeedMolPerL - cv) - r;
+            f1 = s * (prm.TFeedKelvin - tv) + cg * r - cr * (tv - prm.TCoolantKelvin);
+        }
+
+        Rhs2(caV, tV, out double f10, out double f11);
+        double w1_0 = (w11 * f10 - w01 * f11) * invDet;
+        double w1_1 = (-w10 * f10 + w00 * f11) * invDet;
+
+        Rhs2(caV + Ros3A21 * w1_0, tV + Ros3A21 * w1_1, out double f20, out double f21);
+        double invDt = 1.0 / dt;
+        double r20 = f20 + Ros3C21 * invDt * w1_0;
+        double r21 = f21 + Ros3C21 * invDt * w1_1;
+        double w2_0 = (w11 * r20 - w01 * r21) * invDet;
+        double w2_1 = (-w10 * r20 + w00 * r21) * invDet;
+
+        double r30 = f20 + (Ros3C31 * w1_0 + Ros3C32 * w2_0) * invDt;
+        double r31 = f21 + (Ros3C31 * w1_1 + Ros3C32 * w2_1) * invDt;
+        double w3_0 = (w11 * r30 - w01 * r31) * invDet;
+        double w3_1 = (-w10 * r30 + w00 * r31) * invDet;
+
+        double caNext = caV + Ros3M1 * w1_0 + Ros3M2 * w2_0 + Ros3M3 * w3_0;
+        double tNext = tV + Ros3M1 * w1_1 + Ros3M2 * w2_1 + Ros3M3 * w3_1;
+        if (!double.IsFinite(caNext) || !double.IsFinite(tNext)) return -1;
+
+        ca = Math.Max(0.0, caNext);
+        tempK = Math.Clamp(tNext, 50.0, 2500.0);
+        return 0;
+    }
+
+    private static bool ManagedSeriesParallelRos3Single(
+        in CstrSeriesParallelParamsFFI p,
+        double[] xIn,
+        double dt,
+        double[] xOut,
+        double[]? errOut)
+    {
+        double ca = Math.Max(0.0, xIn[0]);
+        double cb = Math.Max(0.0, xIn[1]);
+        double t = Math.Clamp(xIn[4], 50.0, 2500.0);
+
+        double k1 = p.K0_1PerMin * Math.Exp(-p.Ea1OverRKelvin / t);
+        double k2 = p.K0_2PerMin * Math.Exp(-p.Ea2OverRKelvin / t);
+        double k3 = p.K0_3PerMin * Math.Exp(-p.Ea3OverRKelvin / t);
+        double invT2 = 1.0 / (t * t);
+        double dr1 = ca * k1 * p.Ea1OverRKelvin * invT2;
+        double dr2 = cb * k2 * p.Ea2OverRKelvin * invT2;
+        double dr3 = ca * k3 * p.Ea3OverRKelvin * invT2;
+
+        double s = p.VolumetricFlowLPerMin / p.VolumeLiters;
+        double sj = p.JacketFlowLPerMin / p.JacketVolumeLiters;
+        double c1 = p.DeltaH1JPerMol / p.RhoCpJPerLK;
+        double c2 = p.DeltaH2JPerMol / p.RhoCpJPerLK;
+        double c3 = p.DeltaH3JPerMol / p.RhoCpJPerLK;
+        double hr = p.UaJPerMinK / (p.VolumeLiters * p.RhoCpJPerLK);
+        double hj = p.UaJPerMinK / (p.JacketVolumeLiters * p.JacketRhoCpJPerLK);
+
+        double invGh = 1.0 / (Ros3Gamma * dt);
+        var w = new double[6, 6];
+        for (int i = 0; i < 6; i++) w[i, i] = invGh;
+
+        w[0, 0] -= -s - k1 - k3; w[0, 4] -= -(dr1 + dr3);
+        w[1, 0] -= k1; w[1, 1] -= -s - k2; w[1, 4] -= dr1 - dr2;
+        w[2, 1] -= k2; w[2, 2] -= -s; w[2, 4] -= dr2;
+        w[3, 0] -= k3; w[3, 3] -= -s; w[3, 4] -= dr3;
+        w[4, 0] -= c1 * k1 + c3 * k3; w[4, 1] -= c2 * k2;
+        w[4, 4] -= -s - hr + c1 * dr1 + c2 * dr2 + c3 * dr3; w[4, 5] -= hr;
+        w[5, 4] -= hj; w[5, 5] -= -sj - hj;
+
+        var piv = new int[6];
+        for (int i = 0; i < 6; i++) piv[i] = i;
+        for (int k = 0; k < 6; k++)
+        {
+            int maxRow = k;
+            double maxVal = Math.Abs(w[k, k]);
+            for (int i = k + 1; i < 6; i++)
+            {
+                double v = Math.Abs(w[i, k]);
+                if (v > maxVal) { maxVal = v; maxRow = i; }
+            }
+            if (maxVal < 1e-15 || !double.IsFinite(maxVal)) return false;
+            if (maxRow != k)
+            {
+                for (int j = 0; j < 6; j++) (w[k, j], w[maxRow, j]) = (w[maxRow, j], w[k, j]);
+                (piv[k], piv[maxRow]) = (piv[maxRow], piv[k]);
+            }
+            double invDiag = 1.0 / w[k, k];
+            for (int i = k + 1; i < 6; i++)
+            {
+                double mult = w[i, k] * invDiag;
+                w[i, k] = mult;
+                for (int j = k + 1; j < 6; j++) w[i, j] -= mult * w[k, j];
+            }
+        }
+
+        double[] SolveLu(double[] b)
+        {
+            var res = new double[6];
+            for (int i = 0; i < 6; i++)
+            {
+                double sum = b[piv[i]];
+                for (int j = 0; j < i; j++) sum -= w[i, j] * res[j];
+                res[i] = sum;
+            }
+            for (int i = 5; i >= 0; i--)
+            {
+                double sum = res[i];
+                for (int j = i + 1; j < 6; j++) sum -= w[i, j] * res[j];
+                res[i] = sum / w[i, i];
+            }
+            return res;
+        }
+
+        double[] EvalRhs(in CstrSeriesParallelParamsFFI prm, double[] xv)
+        {
+            double x0 = Math.Max(0.0, xv[0]), x1 = Math.Max(0.0, xv[1]);
+            double x2 = Math.Max(0.0, xv[2]), x3 = Math.Max(0.0, xv[3]);
+            double xt = Math.Clamp(xv[4], 50.0, 2500.0), xtj = Math.Clamp(xv[5], 50.0, 2500.0);
+            ManagedSeriesParallelRates(in prm, x0, x1, xt, out double r1, out double r2, out double r3);
+            return
+            [
+                s * (prm.CaFeedMolPerL - x0) - r1 - r3,
+                s * (prm.CbFeedMolPerL - x1) + r1 - r2,
+                s * (prm.CcFeedMolPerL - x2) + r2,
+                s * (prm.CdFeedMolPerL - x3) + r3,
+                s * (prm.TFeedKelvin - xt) + (c1 * r1 + c2 * r2 + c3 * r3) - hr * (xt - xtj),
+                sj * (prm.JacketTInKelvin - xtj) + hj * (xt - xtj)
+            ];
+        }
+
+        double[] f1 = EvalRhs(in p, xIn);
+        double[] w1 = SolveLu(f1);
+
+        var y2 = new double[6];
+        for (int i = 0; i < 6; i++) y2[i] = xIn[i] + Ros3A21 * w1[i];
+        double[] f2 = EvalRhs(in p, y2);
+
+        double invDt = 1.0 / dt;
+        var rhs2 = new double[6];
+        for (int i = 0; i < 6; i++) rhs2[i] = f2[i] + Ros3C21 * invDt * w1[i];
+        double[] w2 = SolveLu(rhs2);
+
+        var rhs3 = new double[6];
+        for (int i = 0; i < 6; i++) rhs3[i] = f2[i] + (Ros3C31 * w1[i] + Ros3C32 * w2[i]) * invDt;
+        double[] w3 = SolveLu(rhs3);
+
+        for (int i = 0; i < 6; i++)
+        {
+            double v = xIn[i] + Ros3M1 * w1[i] + Ros3M2 * w2[i] + Ros3M3 * w3[i];
+            if (!double.IsFinite(v)) return false;
+            xOut[i] = v;
+            if (errOut != null) errOut[i] = Ros3E1 * w1[i] + Ros3E2 * w2[i] + Ros3E3 * w3[i];
+        }
+        return true;
+    }
+
+    private static int ManagedSeriesParallelStepRos3(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca, ref double cb, ref double cc, ref double cd, ref double temp, ref double tempJ, double dt)
+    {
+        if (dt <= 0.0 || p.VolumeLiters <= 0.0 || p.JacketVolumeLiters <= 0.0) return -1;
+        double[] x = [ca, cb, cc, cd, temp, tempJ];
+        var xNext = new double[6];
+        if (!ManagedSeriesParallelRos3Single(in p, x, dt, xNext, null)) return -1;
+        ca = Math.Max(0.0, xNext[0]); cb = Math.Max(0.0, xNext[1]);
+        cc = Math.Max(0.0, xNext[2]); cd = Math.Max(0.0, xNext[3]);
+        temp = Math.Clamp(xNext[4], 50.0, 2500.0); tempJ = Math.Clamp(xNext[5], 50.0, 2500.0);
+        return 0;
+    }
+
+    private static int ManagedSeriesParallelStepRos3Detailed(
+        in CstrSeriesParallelParamsFFI p,
+        ref double ca, ref double cb, ref double cc, ref double cd, ref double temp, ref double tempJ,
+        double dt, double rtol, double atol, double runawayThresholdK, out CstrSeriesParallelStateFFI state)
+    {
+        state = default;
+        if (dt <= 0.0 || p.VolumeLiters <= 0.0 || p.JacketVolumeLiters <= 0.0) return -1;
+
+        double rel = rtol > 0.0 ? rtol : 1e-5;
+        double abs = atol > 0.0 ? atol : 1e-7;
+        double[] x = [ca, cb, cc, cd, temp, tempJ];
+        var xCand = new double[6];
+        var errVec = new double[6];
+        double t = 0.0, h = dt;
+        const double hMin = 1e-8;
+
+        for (int step = 0; step < 4096 && t < dt - 1e-12; step++)
+        {
+            if (t + h > dt) h = dt - t;
+            if (!ManagedSeriesParallelRos3Single(in p, x, h, xCand, errVec))
+            {
+                h *= 0.25;
+                if (h < hMin) return -1;
+                continue;
+            }
+            double errNorm = 0.0;
+            for (int i = 0; i < 6; i++)
+            {
+                double sc = abs + rel * Math.Max(Math.Abs(x[i]), Math.Abs(xCand[i]));
+                double ratio = Math.Abs(errVec[i]) / sc;
+                errNorm += ratio * ratio;
+            }
+            errNorm = Math.Sqrt(errNorm / 6.0);
+            if (errNorm <= 1.0 || h <= hMin * 1.1)
+            {
+                for (int i = 0; i < 6; i++)
+                    x[i] = i < 4 ? Math.Max(0.0, xCand[i]) : Math.Clamp(xCand[i], 50.0, 2500.0);
+                t += h;
+                double scale = errNorm > 1e-12 ? Math.Clamp(0.9 * Math.Pow(errNorm, -1.0 / 3.0), 0.2, 4.0) : 4.0;
+                h *= scale;
+            }
+            else
+            {
+                double scale = Math.Clamp(0.9 * Math.Pow(errNorm, -1.0 / 3.0), 0.1, 0.5);
+                h = Math.Max(hMin, h * scale);
+            }
+        }
+        if (t < dt - 1e-9) return -1;
+
+        ca = x[0]; cb = x[1]; cc = x[2]; cd = x[3]; temp = x[4]; tempJ = x[5];
+        ManagedSeriesParallelRates(in p, ca, cb, temp, out double r1, out double r2, out double r3);
+        double ca0 = p.CaFeedMolPerL > 1e-12 ? p.CaFeedMolPerL : 1.0;
+        double totalProd = cb + cc + cd;
+        state = new CstrSeriesParallelStateFFI
+        {
+            CaMolPerL = ca, CbMolPerL = cb, CcMolPerL = cc, CdMolPerL = cd,
+            TempKelvin = temp, JacketTempKelvin = tempJ,
+            ConversionAPct = ((p.CaFeedMolPerL - ca) / ca0) * 100.0,
+            YieldBPct = ((cb - p.CbFeedMolPerL) / ca0) * 100.0,
+            SelectivityBPct = totalProd > 1e-12 ? (cb / totalProd) * 100.0 : 100.0,
+            RateR1MolPerLMin = r1, RateR2MolPerLMin = r2, RateR3MolPerLMin = r3,
+            HeatGeneratedWatts = p.VolumeLiters * (p.DeltaH1JPerMol * r1 + p.DeltaH2JPerMol * r2 + p.DeltaH3JPerMol * r3) / 60.0,
+            HeatRemovedWatts = p.UaJPerMinK * (temp - tempJ) / 60.0,
+            IsThermalRunaway = temp >= runawayThresholdK
+        };
+        return 0;
+    }
+
     #endregion
 
     private static class NativeMethods
@@ -1568,6 +1921,42 @@ public static class NativeReactorCoreInterop
             [Out] double[] out_cd,
             [Out] double[] out_temp,
             [Out] double[] out_temp_j
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_step_ros3(
+            in CstrParamsFFI parameters,
+            ref double ca,
+            ref double temp_k,
+            double dt
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_step_ros3(
+            in CstrSeriesParallelParamsFFI parameters,
+            ref double ca,
+            ref double cb,
+            ref double cc,
+            ref double cd,
+            ref double temp,
+            ref double temp_j,
+            double dt
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int reactor_cstr_series_parallel_step_ros3_detailed(
+            in CstrSeriesParallelParamsFFI parameters,
+            ref double ca,
+            ref double cb,
+            ref double cc,
+            ref double cd,
+            ref double temp,
+            ref double temp_j,
+            double dt,
+            double rtol,
+            double atol,
+            double runaway_threshold_k,
+            out CstrSeriesParallelStateFFI out_state
         );
     }
 }

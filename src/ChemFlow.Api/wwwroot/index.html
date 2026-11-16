@@ -691,6 +691,9 @@
             <button class="btn-secondary" id="btnLoadClosedLoopComparison" style="border-color: #10b981; color: #6ee7b7; background: rgba(16, 185, 129, 0.14); padding: 0.35rem 0.75rem; font-size: 0.78rem;">
               EKF6 + Economic NMPC
             </button>
+            <button class="btn-secondary" id="btnRunSolverBenchmark" style="border-color: #a855f7; color: #d8b4fe; background: rgba(168, 85, 247, 0.14); padding: 0.35rem 0.75rem; font-size: 0.78rem;">
+              RK4 vs Stiff ROS3L
+            </button>
             <button class="btn-primary" id="btnStartCstrStream" style="background: #0891b2; border-color: #06b6d4; padding: 0.35rem 0.85rem; font-size: 0.82rem;">
               &#9654; Start Live Stream
             </button>
@@ -1092,6 +1095,7 @@
       selCstrStreamMode: document.getElementById('selCstrStreamMode'),
       btnLoadRunawayProfile: document.getElementById('btnLoadRunawayProfile'),
       btnLoadClosedLoopComparison: document.getElementById('btnLoadClosedLoopComparison'),
+      btnRunSolverBenchmark: document.getElementById('btnRunSolverBenchmark'),
       inpNmpcWeightCb: document.getElementById('inpNmpcWeightCb'),
       lblNmpcWeightCb: document.getElementById('lblNmpcWeightCb'),
       inpNmpcMaxTempC: document.getElementById('inpNmpcMaxTempC'),
@@ -2504,6 +2508,73 @@
       }
     }
 
+    async function runSolverStiffBenchmark() {
+      stopCstrStream();
+      silModeActive = false;
+
+      try {
+        const res = await fetch('/api/telemetry/cstr/series-parallel/solver-benchmark', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.detail || 'Solver benchmark failed');
+
+        closedLoopOverlayResult = null;
+        const traj = data.trajectory || [];
+        runawayOverlayProfile = {
+          maxSafeTemperatureCelsius: 146.85,
+          nominalTrajectory: traj.map(p => ({
+            temperatureCelsius: p.ros3TempC,
+            jacketTemperatureCelsius: 75.0,
+            cbMolPerL: p.ros3CbMolPerL
+          })),
+          runawayTrajectory: traj.map(p => ({
+            temperatureCelsius: Math.min(p.rk4TempC, 500.0),
+            jacketTemperatureCelsius: 75.0,
+            cbMolPerL: p.rk4CbMolPerL
+          }))
+        };
+
+        if (els.telemetryEngineBadge && data.engineMode) {
+          els.telemetryEngineBadge.textContent = `Engine: ${data.engineMode} | Stiff Benchmark (dt=${data.stepDtMin} min)`;
+        }
+
+        const last = traj[traj.length - 1];
+        if (last) {
+          if (els.liveKpiTemp) els.liveKpiTemp.textContent = `${last.ros3TempC.toFixed(1)} °C`;
+          if (els.liveKpiTempK) els.liveKpiTempK.textContent = `RK4 Peak: ${data.rk4PeakTempC.toFixed(1)} °C`;
+          if (els.liveKpiCa) els.liveKpiCa.textContent = `${last.ros3CbMolPerL.toFixed(3)} mol/L`;
+          if (els.liveKpiCaFeed) els.liveKpiCaFeed.textContent = `RK4 Cb: ${data.rk4FinalCbMolPerL.toFixed(3)} M`;
+          if (els.liveKpiConv) els.liveKpiConv.textContent = `${data.ros3ElapsedMs.toFixed(2)} ms`;
+          if (els.liveKpiRate) els.liveKpiRate.textContent = `RK4: ${data.rk4ElapsedMs.toFixed(2)} ms`;
+          if (els.liveKpiDuty) els.liveKpiDuty.textContent = `ROS3L Peak: ${data.ros3PeakTempC.toFixed(1)} °C`;
+          if (els.liveKpiTc) els.liveKpiTc.textContent = `Max |dT|: ${data.maxTempDeltaC.toFixed(1)} °C`;
+          if (els.liveKpiTrip) els.liveKpiTrip.textContent = data.rk4BlowupDetected ? 'RK4 BLOWUP!' : 'Both Finite';
+        }
+
+        if (els.liveKpiStatus) {
+          els.liveKpiStatus.textContent = data.ros3RemainedStable ? 'ROS3L STABLE' : 'ROS3L FAULT';
+          els.liveKpiStatus.style.color = data.ros3RemainedStable ? '#34d399' : '#fb7185';
+        }
+        if (els.liveKpiCardStatus) {
+          els.liveKpiCardStatus.style.borderLeftColor = data.ros3RemainedStable ? '#10b981' : '#f43f5e';
+        }
+
+        if (els.liveKpiSpecies && els.liveKpiSelectivity) {
+          els.liveKpiSpecies.textContent =
+            `L-Stable ROS3L Peak ${data.ros3PeakTempC.toFixed(1)}°C (Stable=${data.ros3RemainedStable}) vs Explicit RK4 Peak ${data.rk4PeakTempC.toFixed(1)}°C (Blowup=${data.rk4BlowupDetected})`;
+          els.liveKpiSelectivity.textContent =
+            `Step dt=${data.stepDtMin} min × ${data.steps} steps | ROS3L ${data.ros3ElapsedMs.toFixed(2)}ms vs RK4 ${data.rk4ElapsedMs.toFixed(2)}ms | Final Cb=${data.ros3FinalCbMolPerL.toFixed(4)} M`;
+        }
+
+        drawCstrLiveChart([]);
+      } catch (err) {
+        console.error('Failed to run stiff solver benchmark:', err);
+      }
+    }
+
     function handleCstrTelemetryFrame(frame) {
       const isSp = frame.cbMolPerL !== undefined || frame.jacketTemperatureKelvin !== undefined;
       const tempC = frame.temperatureCelsius ?? (frame.temperatureKelvin - 273.15);
@@ -3033,6 +3104,7 @@
 
     if (els.btnLoadRunawayProfile) els.btnLoadRunawayProfile.addEventListener('click', loadRunawayProfile);
     if (els.btnLoadClosedLoopComparison) els.btnLoadClosedLoopComparison.addEventListener('click', runClosedLoopControlComparison);
+    if (els.btnRunSolverBenchmark) els.btnRunSolverBenchmark.addEventListener('click', runSolverStiffBenchmark);
     if (els.btnStartCstrStream) els.btnStartCstrStream.addEventListener('click', startCstrStream);
     if (els.btnStopCstrStream) els.btnStopCstrStream.addEventListener('click', stopCstrStream);
     if (els.btnSilStart) els.btnSilStart.addEventListener('click', startModbusSilLoop);
