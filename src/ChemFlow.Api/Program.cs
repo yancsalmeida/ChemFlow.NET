@@ -39,6 +39,7 @@ builder.Services.AddSingleton<RaoultThermodynamicPackage>();
 builder.Services.AddSingleton<PengRobinsonThermodynamicPackage>();
 builder.Services.AddSingleton<IThermodynamicPackage>(sp => sp.GetRequiredService<PengRobinsonThermodynamicPackage>());
 builder.Services.AddSingleton<IModbusTcpClientFactory, ModbusTcpClientFactory>();
+builder.Services.AddSingleton<SqliteHistorianOutbox>();
 builder.Services.AddHttpClient<IHistorianTelemetryPublisher, HttpHistorianTelemetryPublisher>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(3);
@@ -1298,6 +1299,20 @@ app.MapPost("/api/supervisory/modbus/stop", async (SupervisoryModbusControllerSe
     return Results.Ok(status);
 })
 .WithName("StopSupervisoryModbusLoop")
+.WithOpenApi();
+
+app.MapPost("/api/supervisory/modbus/flush-historian", async (
+    SupervisoryModbusControllerService supervisory,
+    CancellationToken ct) =>
+{
+    int replayed = await supervisory.FlushHistorianOutboxAsync(ct);
+    return Results.Ok(new
+    {
+        replayedMessages = replayed,
+        status = supervisory.GetStatus()
+    });
+})
+.WithName("FlushSupervisoryHistorianOutbox")
 .WithOpenApi();
 
 app.Run();

@@ -481,14 +481,20 @@ public sealed class SeriesParallelEkf6
         double nis = nu0 * (invS00 * nu0 + invS01 * nu1) + nu1 * (invS01 * nu0 + invS11 * nu1);
         bool fault = nis > _nisThreshold;
 
+        // Robust Huber/chi-square outlier gating: reject extreme spikes/frozen faults while keeping fault flag raised
+        double gateThreshold = _nisThreshold * 4.0;
+        double gainScale = nis > gateThreshold
+            ? Math.Clamp(Math.Sqrt(gateThreshold / nis), 0.05, 1.0)
+            : 1.0;
+
         // Kalman gain K = P * H^T * S^-1 (6x2)
         var gain = new double[StateDim, 2];
         for (int i = 0; i < StateDim; i++)
         {
             double p4 = _p[i, 4];
             double p5 = _p[i, 5];
-            gain[i, 0] = p4 * invS00 + p5 * invS01;
-            gain[i, 1] = p4 * invS01 + p5 * invS11;
+            gain[i, 0] = (p4 * invS00 + p5 * invS01) * gainScale;
+            gain[i, 1] = (p4 * invS01 + p5 * invS11) * gainScale;
         }
 
         // State update x = x + K * nu

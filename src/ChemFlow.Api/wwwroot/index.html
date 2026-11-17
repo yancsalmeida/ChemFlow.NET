@@ -2364,8 +2364,11 @@
             if (st.isRunning && st.historianEnabled && els.lblSilStatus) {
               const stepNum = st.latestTick ? st.latestTick.step : st.stepsExecuted;
               const batchTag = st.historianBatchCode ? ` | ${st.historianBatchCode}` : '';
+              const qTag = (st.historianQueuedMessages > 0 || st.historianReplayedMessages > 0)
+                ? ` [Q:${st.historianQueuedMessages} R:${st.historianReplayedMessages}]`
+                : '';
               els.lblSilStatus.textContent =
-                `SIL Step ${stepNum} | PG: ${st.historianMeasurementsPublished} pts (${st.historianAlertsTriggered} alerts)${batchTag}`;
+                `SIL Step ${stepNum} | PG: ${st.historianMeasurementsPublished} pts (${st.historianAlertsTriggered} alerts)${qTag}${batchTag}`;
             }
             if (!st.isRunning) {
               clearInterval(silPollTimer);

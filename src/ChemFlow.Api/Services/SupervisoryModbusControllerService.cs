@@ -310,10 +310,15 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
                 HistorianBatchCode: hist?.BatchCode,
                 HistorianMeasurementsPublished: hist?.MeasurementsPublished ?? 0,
                 HistorianAlertsTriggered: hist?.AlertsTriggered ?? 0,
-                HistorianLastError: hist?.LastError
+                HistorianLastError: hist?.LastError,
+                HistorianQueuedMessages: hist?.QueuedMessages ?? 0,
+                HistorianReplayedMessages: hist?.ReplayedMessages ?? 0
             );
         }
     }
+
+    public Task<int> FlushHistorianOutboxAsync(CancellationToken ct = default) =>
+        _historianPublisher is not null ? _historianPublisher.FlushOutboxAsync(ct) : Task.FromResult(0);
 
     private async Task RunControlLoopAsync(CancellationToken ct)
     {

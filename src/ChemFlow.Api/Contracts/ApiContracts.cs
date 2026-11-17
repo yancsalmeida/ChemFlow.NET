@@ -591,6 +591,8 @@ public sealed record SupervisoryModbusStatusResponse(
     string? HistorianBatchCode = null,
     long HistorianMeasurementsPublished = 0,
     long HistorianAlertsTriggered = 0,
-    string? HistorianLastError = null
+    string? HistorianLastError = null,
+    long HistorianQueuedMessages = 0,
+    long HistorianReplayedMessages = 0
 );
 

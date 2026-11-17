@@ -152,6 +152,104 @@ public class SupervisoryModbusControlTests
         };
     }
 
+    [Fact]
+    public async Task HistorianPublisher_SpoolsToSqliteOutboxWhenOffline_AndReplaysWithIdempotencyKey()
+    {
+        string dbPath = Path.Combine(Path.GetTempPath(), $"chemflow-outbox-{Guid.NewGuid():N}.db");
+        try
+        {
+            var init = new ChemFlow.Infrastructure.Persistence.SqliteDatabaseInitializer($"Data Source={dbPath}");
+            init.InitializeAndSeed();
+            var outbox = new ChemFlow.Infrastructure.Persistence.SqliteHistorianOutbox(init);
+
+            var batchId = Guid.NewGuid();
+            var toggleHandler = new ToggleableHistorianHandler(batchId) { IsOnline = false };
+            using var httpClient = new HttpClient(toggleHandler);
+            var publisher = new HttpHistorianTelemetryPublisher(
+                httpClient,
+                NullLogger<HttpHistorianTelemetryPublisher>.Instance,
+                outbox);
+            publisher.ConfigureSession(true, "http://mock-historian:5100");
+
+            var tick1 = new SupervisoryModbusTickDto(
+                DateTimeOffset.UtcNow, 1, 0.5, 0.04, 65.0, 38.0, 0.45, 0.28, 56.0, 51.85, false,
+                0.45, 0.28, 65.0, 38.0, 0.8, false, 55.0, 1.2, 2.0, 0.4, "Test");
+            var tick2 = tick1 with { Step = 2, TimestampUtc = DateTimeOffset.UtcNow.AddMilliseconds(500) };
+
+            await publisher.PublishTickAsync(tick1);
+            await publisher.PublishTickAsync(tick2);
+
+            HistorianPublishSnapshot offlineSnap = publisher.GetSnapshot();
+            Assert.Equal(2, offlineSnap.QueuedMessages);
+            Assert.Equal(0, offlineSnap.ReplayedMessages);
+            Assert.NotNull(offlineSnap.LastError);
+
+            // Restore connectivity -> manual flush drains both spooled entries with Idempotency-Key
+            toggleHandler.IsOnline = true;
+            int replayed = await publisher.FlushOutboxAsync();
+
+            HistorianPublishSnapshot recoveredSnap = publisher.GetSnapshot();
+            Assert.Equal(2, replayed);
+            Assert.Equal(0, recoveredSnap.QueuedMessages);
+            Assert.Equal(2, recoveredSnap.ReplayedMessages);
+            Assert.Equal(14, recoveredSnap.MeasurementsPublished);
+            Assert.Null(recoveredSnap.LastError);
+            Assert.Equal(2, toggleHandler.ReceivedIdempotencyKeys.Count);
+            Assert.All(toggleHandler.ReceivedIdempotencyKeys, k => Assert.StartsWith("sil-", k));
+        }
+        finally
+        {
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
+
+    [Fact]
+    public void SeriesParallelEkf6_GatesExtremeThermocoupleSpikeWhileFlaggingFault()
+    {
+        var ekf = new SeriesParallelEkf6(0.48, 0.28, 0.21, 0.03, 335.15, 309.15);
+        var p = NativeReactorCoreInterop.GetSeriesParallelDefaultParameters();
+        ekf.Predict(in p, 55.0, 0.02);
+
+        double priorTempK = ekf.State[4];
+        // Inject massive +60 K thermocouple spike
+        SpEkfUpdateResult corrupted = ekf.Update(priorTempK + 60.0, ekf.State[5]);
+
+        Assert.True(corrupted.SensorFaultDetected, $"Expected NIS fault, got NIS={corrupted.Nis}");
+        Assert.True(corrupted.Nis > 50.0);
+        // Outlier gating should prevent EKF temperature from jumping the full +60 K spike
+        Assert.True(corrupted.TempKelvin - priorTempK < 18.0,
+            $"Expected outlier gating to bound jump, jumped {corrupted.TempKelvin - priorTempK:F2} K");
+    }
+
+    private sealed class ToggleableHistorianHandler(Guid batchId) : HttpMessageHandler
+    {
+        public bool IsOnline { get; set; }
+        public List<string> ReceivedIdempotencyKeys { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (!IsOnline)
+                throw new HttpRequestException("Simulated Historian downtime");
+
+            string path = request.RequestUri?.PathAndQuery ?? string.Empty;
+            if (request.Method == HttpMethod.Get && path.StartsWith("/api/batches", StringComparison.Ordinal))
+                return Task.FromResult(JsonResp(HttpStatusCode.OK, $"[{{\"id\":\"{batchId}\",\"code\":\"BATCH-REPLAY\",\"status\":\"InProgress\"}}]"));
+
+            if (request.Method == HttpMethod.Post && path == "/api/telemetry/ingest")
+            {
+                if (request.Headers.TryGetValues("Idempotency-Key", out var vals))
+                    ReceivedIdempotencyKeys.Add(vals.First());
+                return Task.FromResult(JsonResp(HttpStatusCode.OK, "{\"measurementsIngested\":7,\"alertsTriggered\":0}"));
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private static HttpResponseMessage JsonResp(HttpStatusCode status, string json) => new(status)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+
     private sealed class LoopbackSeriesParallelModbusServer : IAsyncDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
