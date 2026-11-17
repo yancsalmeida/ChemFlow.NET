@@ -245,15 +245,38 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
 
     public async Task<SupervisoryModbusStatusResponse> StopControlLoopAsync()
     {
-        await _lifecycleLock.WaitAsync().ConfigureAwait(false);
+        if (Volatile.Read(ref _disposed) != 0)
+            return GetStatus();
+
         try
         {
+            await _lifecycleLock.WaitAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return GetStatus();
+        }
+
+        try
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                return GetStatus();
+
             await StopControlLoopLockedAsync().ConfigureAwait(false);
             return GetStatus();
         }
         finally
         {
-            _lifecycleLock.Release();
+            if (Volatile.Read(ref _disposed) == 0)
+            {
+                try
+                {
+                    _lifecycleLock.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
         }
     }
 
