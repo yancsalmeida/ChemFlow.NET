@@ -532,7 +532,9 @@ public sealed record SupervisoryModbusStartRequest(
     double MaxSafeTempC = 126.85,
     double? TargetCbMolPerL = null,
     double MaxSlewPerStepPct = 25.0,
-    double? FeedTempOverrideC = null
+    double? FeedTempOverrideC = null,
+    bool PublishToHistorian = true,
+    string? HistorianEngineUrl = null
 );
 
 public sealed record SupervisoryDisturbanceRequest(
@@ -583,6 +585,12 @@ public sealed record SupervisoryModbusStatusResponse(
     double? TargetCbMolPerL,
     string EngineMode,
     SupervisoryModbusTickDto? LatestTick,
-    IReadOnlyList<SupervisoryModbusTickDto> History
+    IReadOnlyList<SupervisoryModbusTickDto> History,
+    bool HistorianEnabled = false,
+    string? HistorianEngineUrl = null,
+    string? HistorianBatchCode = null,
+    long HistorianMeasurementsPublished = 0,
+    long HistorianAlertsTriggered = 0,
+    string? HistorianLastError = null
 );
 

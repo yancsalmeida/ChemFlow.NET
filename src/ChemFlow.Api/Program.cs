@@ -39,6 +39,10 @@ builder.Services.AddSingleton<RaoultThermodynamicPackage>();
 builder.Services.AddSingleton<PengRobinsonThermodynamicPackage>();
 builder.Services.AddSingleton<IThermodynamicPackage>(sp => sp.GetRequiredService<PengRobinsonThermodynamicPackage>());
 builder.Services.AddSingleton<IModbusTcpClientFactory, ModbusTcpClientFactory>();
+builder.Services.AddHttpClient<IHistorianTelemetryPublisher, HttpHistorianTelemetryPublisher>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
 builder.Services.AddSingleton<SupervisoryModbusControllerService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SupervisoryModbusControllerService>());
 

@@ -34,6 +34,7 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
 
     private readonly IModbusTcpClientFactory _clientFactory;
     private readonly IHubContext<SimulationTelemetryHub>? _hubContext;
+    private readonly IHistorianTelemetryPublisher? _historianPublisher;
     private readonly ILogger<SupervisoryModbusControllerService> _logger;
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -67,11 +68,13 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
     public SupervisoryModbusControllerService(
         IModbusTcpClientFactory clientFactory,
         ILogger<SupervisoryModbusControllerService> logger,
-        IHubContext<SimulationTelemetryHub>? hubContext = null)
+        IHubContext<SimulationTelemetryHub>? hubContext = null,
+        IHistorianTelemetryPublisher? historianPublisher = null)
     {
         _clientFactory = clientFactory;
         _logger = logger;
         _hubContext = hubContext;
+        _historianPublisher = historianPublisher;
         _host = Environment.GetEnvironmentVariable("PROCESSTWIN_MODBUS_HOST") ?? "127.0.0.1";
         _port = int.TryParse(Environment.GetEnvironmentVariable("PROCESSTWIN_MODBUS_PORT"), out int envPort)
             ? envPort
@@ -108,6 +111,7 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
             double maxSafeC = Math.Clamp(req.MaxSafeTempC, 80.0, 200.0);
             double? targetCb = req.TargetCbMolPerL is double t and > 0.0 ? Math.Clamp(t, 0.01, 2.0) : null;
             double maxSlew = Math.Clamp(req.MaxSlewPerStepPct, 2.0, 100.0);
+            _historianPublisher?.ConfigureSession(req.PublishToHistorian, req.HistorianEngineUrl);
 
             var client = _clientFactory.CreateClient();
             await client.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
@@ -282,6 +286,7 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
 
     public SupervisoryModbusStatusResponse GetStatus()
     {
+        HistorianPublishSnapshot? hist = _historianPublisher?.GetSnapshot();
         lock (_stateLock)
         {
             return new SupervisoryModbusStatusResponse(
@@ -299,7 +304,13 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
                 TargetCbMolPerL: _targetCbMolPerL,
                 EngineMode: SeriesParallelTelemetryHelper.GetEngineModeLabel(),
                 LatestTick: _latestTick,
-                History: _history.ToArray()
+                History: _history.ToArray(),
+                HistorianEnabled: hist?.Enabled ?? false,
+                HistorianEngineUrl: hist?.EngineUrl,
+                HistorianBatchCode: hist?.BatchCode,
+                HistorianMeasurementsPublished: hist?.MeasurementsPublished ?? 0,
+                HistorianAlertsTriggered: hist?.AlertsTriggered ?? 0,
+                HistorianLastError: hist?.LastError
             );
         }
     }
@@ -477,6 +488,11 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
         if (_hubContext is not null)
         {
             await _hubContext.Clients.All.SendAsync("SupervisoryModbusTick", tick, ct).ConfigureAwait(false);
+        }
+
+        if (_historianPublisher is not null)
+        {
+            await _historianPublisher.PublishTickAsync(tick, ct).ConfigureAwait(false);
         }
     }
 

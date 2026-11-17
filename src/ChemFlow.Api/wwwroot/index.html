@@ -2356,11 +2356,16 @@
         if (silPollTimer) clearInterval(silPollTimer);
         silPollTimer = setInterval(async () => {
           if (!silModeActive) return;
-          if (signalrConnection && signalrConnection.state === 'Connected') return;
           try {
             const st = await (await fetch('/api/supervisory/modbus/status')).json();
             if (st.latestTick && (!silTrajectory.length || silTrajectory[silTrajectory.length - 1].step < st.latestTick.step)) {
               handleSupervisoryModbusTick(st.latestTick);
+            }
+            if (st.isRunning && st.historianEnabled && els.lblSilStatus) {
+              const stepNum = st.latestTick ? st.latestTick.step : st.stepsExecuted;
+              const batchTag = st.historianBatchCode ? ` | ${st.historianBatchCode}` : '';
+              els.lblSilStatus.textContent =
+                `SIL Step ${stepNum} | PG: ${st.historianMeasurementsPublished} pts (${st.historianAlertsTriggered} alerts)${batchTag}`;
             }
             if (!st.isRunning) {
               clearInterval(silPollTimer);

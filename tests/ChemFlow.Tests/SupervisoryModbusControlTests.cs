@@ -76,6 +76,82 @@ public class SupervisoryModbusControlTests
         Assert.False(stopStatus.IsRunning);
     }
 
+    [Fact]
+    public async Task SupervisoryModbusControllerService_StreamsTicksToHistorianPublisher()
+    {
+        await using var simServer = new LoopbackSeriesParallelModbusServer();
+        simServer.Start();
+
+        var batchId = Guid.NewGuid();
+        var capturedBodies = new List<string>();
+        var handler = new StubHistorianHandler(batchId, capturedBodies);
+        using var httpClient = new HttpClient(handler);
+        var publisher = new HttpHistorianTelemetryPublisher(
+            httpClient,
+            NullLogger<HttpHistorianTelemetryPublisher>.Instance);
+
+        await using var supervisory = new SupervisoryModbusControllerService(
+            new ModbusTcpClientFactory(),
+            NullLogger<SupervisoryModbusControllerService>.Instance,
+            hubContext: null,
+            historianPublisher: publisher);
+
+        await supervisory.StartControlLoopAsync(
+            new SupervisoryModbusStartRequest(
+                Host: "127.0.0.1",
+                Port: simServer.Port,
+                ScanIntervalMs: 120,
+                TimeScale: 5.0,
+                PublishToHistorian: true,
+                HistorianEngineUrl: "http://mock-historian:5100"));
+
+        await Task.Delay(600);
+        SupervisoryModbusStatusResponse status = await supervisory.StopControlLoopAsync();
+
+        Assert.True(status.HistorianEnabled);
+        Assert.Equal("BATCH-SIL-TEST", status.HistorianBatchCode);
+        Assert.True(status.StepsExecuted >= 3, $"Expected >= 3 SIL steps, got {status.StepsExecuted}");
+        Assert.True(status.HistorianMeasurementsPublished >= status.StepsExecuted * 7L);
+        Assert.True(status.HistorianAlertsTriggered >= status.StepsExecuted);
+        Assert.Null(status.HistorianLastError);
+        Assert.NotEmpty(capturedBodies);
+        Assert.Contains("\"SP-TT-201\"", capturedBodies[0]);
+        Assert.Contains("\"SP-AT-201-CB\"", capturedBodies[0]);
+        Assert.Contains("\"SP-TCV-201-NMPC\"", capturedBodies[0]);
+    }
+
+    private sealed class StubHistorianHandler(Guid batchId, List<string> capturedIngestBodies) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            string path = request.RequestUri?.PathAndQuery ?? string.Empty;
+            if (request.Method == HttpMethod.Get && path.StartsWith("/api/batches", StringComparison.Ordinal))
+            {
+                return JsonResp(HttpStatusCode.OK, "[]");
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/batches")
+            {
+                return JsonResp(HttpStatusCode.Created, $"{{\"id\":\"{batchId}\",\"code\":\"BATCH-SIL-TEST\",\"status\":\"Scheduled\"}}");
+            }
+            if (request.Method == HttpMethod.Post && path.EndsWith("/start", StringComparison.Ordinal))
+            {
+                return JsonResp(HttpStatusCode.OK, $"{{\"id\":\"{batchId}\",\"code\":\"BATCH-SIL-TEST\",\"status\":\"InProgress\"}}");
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/telemetry/ingest")
+            {
+                string raw = await request.Content!.ReadAsStringAsync(cancellationToken);
+                lock (capturedIngestBodies) { capturedIngestBodies.Add(raw); }
+                return JsonResp(HttpStatusCode.OK, "{\"measurementsIngested\":7,\"alertsTriggered\":1}");
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+
+        private static HttpResponseMessage JsonResp(HttpStatusCode status, string json) => new(status)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+
     private sealed class LoopbackSeriesParallelModbusServer : IAsyncDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
