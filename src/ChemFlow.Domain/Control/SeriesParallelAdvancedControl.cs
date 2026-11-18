@@ -479,13 +479,23 @@ public sealed class SeriesParallelEkf6
         double invS11 = s00 * invDet;
 
         double nis = nu0 * (invS00 * nu0 + invS01 * nu1) + nu1 * (invS01 * nu0 + invS11 * nu1);
-        bool fault = nis > _nisThreshold;
 
-        // Robust Huber/chi-square outlier gating: reject extreme spikes/frozen faults while keeping fault flag raised
-        double gateThreshold = _nisThreshold * 4.0;
-        double gainScale = nis > gateThreshold
-            ? Math.Clamp(Math.Sqrt(gateThreshold / nis), 0.05, 1.0)
-            : 1.0;
+        // Two-stage chi-square outlier gating:
+        // - Soft Huber attenuation for moderate innovations (4x..10x threshold)
+        // - Hard measurement freeze (gainScale = 0.0, coast on ODE physics) for extreme spikes
+        //   Checked against both posterior S and nominal sensor variance (_rT, _rTj) so open-loop
+        //   covariance growth during sustained faults cannot inflate S to bypass the gate.
+        double softGate = _nisThreshold * 4.0;
+        double hardReject = _nisThreshold * 10.0;
+        double nisNominal = (nu0 * nu0) / (_rT + 0.5) + (nu1 * nu1) / (_rTj + 0.5);
+        bool hardOutlier = nis > hardReject || nisNominal > hardReject * 1.5;
+        bool fault = nis > _nisThreshold || hardOutlier;
+        if (hardOutlier)
+            nis = Math.Max(nis, nisNominal);
+
+        double gainScale = hardOutlier
+            ? 0.0
+            : (nis > softGate ? Math.Clamp(softGate / nis, 0.0, 1.0) : 1.0);
 
         // Kalman gain K = P * H^T * S^-1 (6x2)
         var gain = new double[StateDim, 2];

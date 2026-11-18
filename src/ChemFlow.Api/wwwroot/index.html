@@ -449,6 +449,11 @@
       </div>
     </div>
     <div class="header-actions">
+      <select id="selRbacRole" title="Industrial RBAC Role Key" style="font-size:0.72rem; padding:0.25rem 0.45rem; background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:6px;">
+        <option value="engineer-admin-key" selected>Role: Engineer</option>
+        <option value="operator-ctrl-key">Role: Operator</option>
+        <option value="viewer-ro-key">Role: Viewer (RO)</option>
+      </select>
       <span class="pill-badge" id="signalrStatusBadge" style="background: rgba(244, 63, 94, 0.15); border-color: rgba(244, 63, 94, 0.4); color: #fb7185;">
         &bull; SignalR Disconnected
       </span>
@@ -1011,6 +1016,14 @@
   <script>
     let currentDotCode = '';
     let currentRunId = null;
+
+    const origFetch = window.fetch.bind(window);
+    window.fetch = (input, init = {}) => {
+      const key = document.getElementById('selRbacRole')?.value;
+      const headers = new Headers(init.headers || {});
+      if (key && !headers.has('X-Api-Key')) headers.set('X-Api-Key', key);
+      return origFetch(input, { ...init, headers });
+    };
 
     const els = {
       inpF1: document.getElementById('inpF1'),

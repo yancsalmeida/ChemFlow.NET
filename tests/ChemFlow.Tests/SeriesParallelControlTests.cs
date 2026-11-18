@@ -159,4 +159,27 @@ public class SeriesParallelControlTests
         Assert.True(bench.Rk4BlowupDetected,
             $"Expected raw explicit RK4 at dt=0.08 min to diverge/blow up, peak was {bench.Rk4PeakTempC} C");
     }
+
+    [Fact]
+    public void SeriesParallelEkf6_Sustained40KSpike_FreezesMeasurementUpdateAndPreventsRunaway()
+    {
+        var p = ChemFlow.Domain.Native.NativeReactorCoreInterop.GetSeriesParallelDefaultParameters();
+        var ekf = new SeriesParallelEkf6(0.48, 0.28, 0.21, 0.03, 335.15, 309.15);
+
+        double trueCa = 0.48, trueCb = 0.28, trueCc = 0.21, trueCd = 0.03;
+        double trueT = 335.15, trueTj = 309.15;
+
+        for (int step = 0; step < 30; step++)
+        {
+            double valvePct = 55.0;
+            var pAct = SeriesParallelActuatorModel.ApplyValveCommand(in p, valvePct);
+            ChemFlow.Domain.Native.NativeReactorCoreInterop.StepSeriesParallelRk4(
+                in pAct, ref trueCa, ref trueCb, ref trueCc, ref trueCd, ref trueT, ref trueTj, 0.05);
+            ekf.Predict(in p, valvePct, 0.05);
+            var upd = ekf.Update(trueT + 40.0, trueTj);
+            Assert.True(upd.SensorFaultDetected, $"Expected fault detection on step {step}");
+            Assert.True(Math.Abs(upd.TempKelvin - trueT) < 5.0,
+                $"EKF6 drifted {upd.TempKelvin - trueT:F2} K during sustained +40K spike at step {step}");
+        }
+    }
 }

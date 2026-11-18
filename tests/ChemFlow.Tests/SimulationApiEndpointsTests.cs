@@ -538,6 +538,45 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         string html = await _client.GetStringAsync("/");
         Assert.Contains("selSpSeparationMode", html);
         Assert.Contains("btnCompareSpPlant", html);
+        Assert.Contains("selRbacRole", html);
+    }
+
+    [Fact]
+    public async Task IndustrialRbacMiddleware_ProtectsSupervisoryEndpointsByRole()
+    {
+        var config = new Microsoft.Extensions.Configuration.ConfigurationManager();
+        config["IndustrialAuth:EnforceRbac"] = "true";
+
+        var logger = Microsoft.Extensions.Logging.Abstractions.NullLogger<ChemFlow.Api.Middleware.IndustrialRbacMiddleware>.Instance;
+        var mw = new ChemFlow.Api.Middleware.IndustrialRbacMiddleware(
+            ctx => { ctx.Response.StatusCode = 200; return Task.CompletedTask; },
+            logger,
+            config);
+
+        // Anonymous POST /api/supervisory/modbus/start -> 401
+        var anonCtx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        anonCtx.Request.Method = "POST";
+        anonCtx.Request.Path = "/api/supervisory/modbus/start";
+        anonCtx.Response.Body = new MemoryStream();
+        await mw.InvokeAsync(anonCtx);
+        Assert.Equal(401, anonCtx.Response.StatusCode);
+
+        // Operator calling Engineer-only disturbance -> 403
+        var opCtx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        opCtx.Request.Method = "POST";
+        opCtx.Request.Path = "/api/supervisory/modbus/disturbance";
+        opCtx.Request.Headers["X-Api-Key"] = "operator-ctrl-key";
+        opCtx.Response.Body = new MemoryStream();
+        await mw.InvokeAsync(opCtx);
+        Assert.Equal(403, opCtx.Response.StatusCode);
+
+        // Engineer calling disturbance -> 200
+        var engCtx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        engCtx.Request.Method = "POST";
+        engCtx.Request.Path = "/api/supervisory/modbus/disturbance";
+        engCtx.Request.Headers["X-Api-Key"] = "engineer-admin-key";
+        await mw.InvokeAsync(engCtx);
+        Assert.Equal(200, engCtx.Response.StatusCode);
     }
 }
 

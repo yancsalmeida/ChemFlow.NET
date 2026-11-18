@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ChemFlow.Api.Contracts;
 using ChemFlow.Api.Hubs;
+using ChemFlow.Api.Middleware;
 using ChemFlow.Api.Observability;
 using ChemFlow.Api.Services;
 using ChemFlow.Domain.Control;
@@ -48,6 +49,8 @@ builder.Services.AddSingleton<SqliteHistorianOutbox>();
 builder.Services.AddHttpClient<IHistorianTelemetryPublisher, HttpHistorianTelemetryPublisher>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(3);
+    string apiKey = Environment.GetEnvironmentVariable("TELEMETRY_API_KEY") ?? "operator-ctrl-key";
+    client.DefaultRequestHeaders.TryAddWithoutValidation("X-Api-Key", apiKey);
 });
 builder.Services.AddSingleton<SupervisoryModbusControllerService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SupervisoryModbusControllerService>());
@@ -103,6 +106,7 @@ app.Use(async (context, next) =>
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseMiddleware<IndustrialRbacMiddleware>();
 app.UseSwagger();
 app.UseSwaggerUI();
 
