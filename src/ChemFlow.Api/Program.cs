@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using ChemFlow.Api.Contracts;
 using ChemFlow.Api.Hubs;
+using ChemFlow.Api.Observability;
 using ChemFlow.Api.Services;
 using ChemFlow.Domain.Control;
 using ChemFlow.Domain.Data;
@@ -16,6 +18,9 @@ using ChemFlow.Domain.Units;
 using ChemFlow.Infrastructure.Industrial;
 using ChemFlow.Infrastructure.Persistence;
 using ChemFlow.Infrastructure.Repositories;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,8 +51,55 @@ builder.Services.AddHttpClient<IHistorianTelemetryPublisher, HttpHistorianTeleme
 });
 builder.Services.AddSingleton<SupervisoryModbusControllerService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SupervisoryModbusControllerService>());
+builder.Services.AddSingleton(sp =>
+{
+    var controller = sp.GetRequiredService<SupervisoryModbusControllerService>();
+    return new ChemFlowTelemetry(() => controller.GetStatus());
+});
+
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: ChemFlowTelemetry.ServiceName,
+        serviceVersion: "1.0.0"))
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddSource(ChemFlowTelemetry.ServiceName)
+            .AddAspNetCoreInstrumentation(opt => opt.RecordException = true)
+            .AddHttpClientInstrumentation();
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            tracing.AddOtlpExporter(opt => opt.Endpoint = new Uri(otlpEndpoint));
+        }
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddMeter(ChemFlowTelemetry.ServiceName)
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddPrometheusExporter();
+    });
 
 var app = builder.Build();
+
+_ = app.Services.GetRequiredService<ChemFlowTelemetry>();
+
+app.Use(async (context, next) =>
+{
+    if (Activity.Current is { } activity)
+    {
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers["X-Trace-Id"] = activity.TraceId.ToString();
+            return Task.CompletedTask;
+        });
+    }
+
+    await next();
+});
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -1314,6 +1366,8 @@ app.MapPost("/api/supervisory/modbus/flush-historian", async (
 })
 .WithName("FlushSupervisoryHistorianOutbox")
 .WithOpenApi();
+
+app.MapPrometheusScrapingEndpoint("/metrics");
 
 app.Run();
 

@@ -476,6 +476,25 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         string html = await _client.GetStringAsync("/");
         Assert.Contains("btnRunSolverBenchmark", html);
     }
+
+    [Fact]
+    public async Task Observability_PrometheusMetricsEndpoint_AndTraceIdPropagation()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/compounds");
+        const string expectedTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+        request.Headers.Add("traceparent", $"00-{expectedTraceId}-00f067aa0ba902b7-01");
+
+        HttpResponseMessage apiResp = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, apiResp.StatusCode);
+        Assert.True(apiResp.Headers.TryGetValues("X-Trace-Id", out var traceHeaderValues));
+        Assert.Contains(expectedTraceId, traceHeaderValues);
+
+        HttpResponseMessage metricsResp = await _client.GetAsync("/metrics");
+        Assert.Equal(HttpStatusCode.OK, metricsResp.StatusCode);
+        string metricsBody = await metricsResp.Content.ReadAsStringAsync();
+        Assert.Contains("chemflow_sil_running", metricsBody);
+        Assert.Contains("chemflow_historian_outbox_queued", metricsBody);
+    }
 }
 
 

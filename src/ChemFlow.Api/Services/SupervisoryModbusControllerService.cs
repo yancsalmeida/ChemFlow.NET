@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ChemFlow.Api.Contracts;
 using ChemFlow.Api.Hubs;
+using ChemFlow.Api.Observability;
 using ChemFlow.Domain.Control;
 using ChemFlow.Domain.Industrial;
 using ChemFlow.Domain.Native;
@@ -381,6 +382,7 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
         if (client is null || ekf is null || nmpc is null)
             return;
 
+        using Activity? tickActivity = ChemFlowTelemetry.ActivitySource.StartActivity("sil.modbus.tick", ActivityKind.Producer);
         var modbusSw = Stopwatch.StartNew();
         ushort[] regs = await client.ReadHoldingRegistersAsync(RegStartAddress, RegCount, ct).ConfigureAwait(false);
         bool[] coils = await client.ReadCoilsAsync(CoilSpNmpcEnable, 2, ct).ConfigureAwait(false);
@@ -489,6 +491,12 @@ public sealed class SupervisoryModbusControllerService : IHostedService, IAsyncD
             while (_history.Count > MaxHistoryCount)
                 _history.Dequeue();
         }
+
+        tickActivity?.SetTag("sil.step", tick.Step);
+        tickActivity?.SetTag("sil.plant_temp_c", tick.PlantTempC);
+        tickActivity?.SetTag("sil.ekf_nis", tick.EkfNis);
+        tickActivity?.SetTag("sil.fault_detected", tick.SensorFaultDetected);
+        ChemFlowTelemetry.RecordTick(tick);
 
         if (_hubContext is not null)
         {
