@@ -464,4 +464,69 @@ public sealed class SeriesParallelFlowsheetTests
         feed.SolveEquilibrium(_thermo);
         Assert.Throws<InvalidOperationException>(() => missingCompoundReactor.Solve(_thermo));
     }
+
+    [Fact]
+    public void SeriesParallelCstr_StiffRos3LSolver_FlashDrumPengRobinsonRecycle_ConvergesWithBroydenAndConservesBalances()
+    {
+        var pengRobinson = new PengRobinsonThermodynamicPackage();
+        IReadOnlyList<ChemicalCompound> compounds = CreateHydrocarbonReactionCompounds();
+
+        var freshFeed = new MaterialStream("S-FL-FRESH", "Fresh Feed", compounds, 12.0, 345.0, 150.0, [0.97, 0.03, 0.0, 0.0]);
+        var recycleTear = new MaterialStream("S-FL-REC", "Flash Vapor Recycle", compounds, 3.0, 360.0, 150.0, [0.95, 0.05, 0.0, 0.0]);
+        var rxnIn = new MaterialStream("S-FL-IN", "Reactor Feed", compounds);
+        var rxnOut = new MaterialStream("S-FL-OUT", "Reactor Effluent", compounds);
+        var flashIn = new MaterialStream("S-FL-COOL", "Cooled Flash Feed", compounds);
+        var flashVap = new MaterialStream("S-FL-VAP", "Flash Vapor Overhead", compounds);
+        var flashLiq = new MaterialStream("S-FL-LIQ", "Benzene Product Liquid", compounds);
+        var purge = new MaterialStream("S-FL-PURGE", "Purge", compounds);
+
+        var mixer = new Mixer("MIX-FL", "Feed-Recycle Mixer", [freshFeed, recycleTear], rxnIn);
+        var reactor = new SeriesParallelContinuousStirredTankReactor(
+            id: "R-FL",
+            name: "ROS3L Series-Parallel CSTR",
+            inletStream: rxnIn,
+            outletStream: rxnOut,
+            reactantACompoundId: "n-C5H12",
+            productBCompoundId: "C6H6",
+            byproductCCompoundId: "C7H8",
+            byproductDCompoundId: "p-C8H10",
+            reactorVolumeLiters: 110.0,
+            rhoCpJPerLK: 2200.0,
+            k0_1PerMin: 2.0e6,
+            ea1OverRKelvin: 5000.0,
+            deltaH1JPerMol: 8000.0,
+            k0_2PerMin: 3.5e5,
+            ea2OverRKelvin: 5200.0,
+            deltaH2JPerMol: 6000.0,
+            k0_3PerMin: 1.5e5,
+            ea3OverRKelvin: 5400.0,
+            deltaH3JPerMol: 7000.0,
+            coolingUaWattsPerKelvin: 4000.0,
+            jacketInletTemperatureKelvin: 345.0,
+            maxSafeTemperatureKelvin: 450.0,
+            useStiffRos3LSolver: true);
+
+        var cooler = new HeaterCooler("E-FL", "Effluent Flash Cooler", rxnOut, flashIn, 360.0);
+        var flashDrum = new FlashDrum("V-FL", "VLE Flash Drum", flashIn, flashVap, flashLiq, 360.0, 150.0);
+        var splitter = new Splitter("SPL-FL", "Vapor Recycle Splitter", flashVap, [recycleTear, purge], [0.85, 0.15]);
+
+        var flowsheet = new ProcessFlowsheet("ROS3L Flash-Recycle Plant", pengRobinson);
+        flowsheet.AddUnit(mixer);
+        flowsheet.AddUnit(reactor);
+        flowsheet.AddUnit(cooler);
+        flowsheet.AddUnit(flashDrum);
+        flowsheet.AddUnit(splitter);
+
+        FlowsheetSolveResult result = flowsheet.SolveWithRecycle(
+            new RecycleSolverOptions(Method: RecycleConvergenceMethod.Broyden, MaxIterations: 60, Tolerance: 1e-5));
+        FlowsheetBalanceReport report = flowsheet.GenerateBalanceReport();
+
+        Assert.True(reactor.UseStiffRos3LSolver);
+        Assert.True(result.HasRecycle);
+        Assert.True(result.IsConverged, $"Broyden flash recycle did not converge after {result.Iterations} iterations.");
+        Assert.True(report.IsMassConserved, $"Mass error: {report.GlobalBalance.RelativeMassError:E3}");
+        Assert.True(report.IsEnergyConserved, $"Energy error: {report.GlobalBalance.RelativeEnthalpyError:E3}");
+        Assert.True(flashVap.MolarFlowRateMolPerSec > 0.1);
+        Assert.True(flashLiq.MolarFlowRateMolPerSec > 1.0);
+    }
 }

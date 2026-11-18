@@ -326,7 +326,9 @@ public sealed class ProcessFlowsheet
         }
 
         // Step 5: Iterative tear stream convergence loop
-        var accelerator = new WegsteinRecycleAccelerator(options);
+        IRecycleAccelerator accelerator = options.Method == RecycleConvergenceMethod.Broyden
+            ? new BroydenRecycleAccelerator(options)
+            : new WegsteinRecycleAccelerator(options);
         var convergenceHistory = new List<TearStreamConvergenceRecord>();
         bool allConverged = false;
         int completedIterations = 0;

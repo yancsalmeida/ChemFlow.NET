@@ -75,6 +75,7 @@ public sealed class SeriesParallelContinuousStirredTankReactor : UnitOperationBa
     public double HeatRemovedWatts { get; private set; }
     public bool IsThermalRunaway { get; private set; }
     public bool IsUsingNativeCore => NativeReactorCoreInterop.IsNativeAvailable;
+    public bool UseStiffRos3LSolver { get; }
 
     public SeriesParallelContinuousStirredTankReactor(
         string id,
@@ -105,7 +106,8 @@ public sealed class SeriesParallelContinuousStirredTankReactor : UnitOperationBa
         double maxSafeTemperatureKelvin = 450.0,
         double pressureDropKpa = 0.0,
         double integrationResidenceTimes = 6.0,
-        int maxIntegrationSteps = 2000)
+        int maxIntegrationSteps = 2000,
+        bool useStiffRos3LSolver = false)
         : base(id, name, [inletStream], [outletStream])
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reactantACompoundId);
@@ -188,6 +190,7 @@ public sealed class SeriesParallelContinuousStirredTankReactor : UnitOperationBa
         PressureDropKpa = pressureDropKpa;
         IntegrationResidenceTimes = integrationResidenceTimes;
         MaxIntegrationSteps = maxIntegrationSteps;
+        UseStiffRos3LSolver = useStiffRos3LSolver;
     }
 
     protected override void SolveInternal(IThermodynamicPackage thermo)
@@ -301,22 +304,43 @@ public sealed class SeriesParallelContinuousStirredTankReactor : UnitOperationBa
         while (elapsed < horizonMinutes - 1e-12 && stepCount < stepLimit)
         {
             double remaining = horizonMinutes - elapsed;
-            NativeReactorCoreInterop.SeriesParallelRates(in parameters, 1.0, 1.0, temp, out double k1, out double k2, out double k3);
-            double maxCharacteristicRate = Math.Max(k1 + k3, Math.Max(k2, invHydraulicAndThermalTau));
-            double safeDt = 0.25 / Math.Max(1e-3, maxCharacteristicRate);
-            double dt = Math.Min(remaining, Math.Clamp(safeDt, 1e-5, maxMacroDt));
+            double dt;
+            int status;
 
-            int status = NativeReactorCoreInterop.StepSeriesParallelDetailed(
-                in parameters,
-                ref ca,
-                ref cb,
-                ref cc,
-                ref cd,
-                ref temp,
-                ref tempJ,
-                dt,
-                MaxSafeTemperatureKelvin,
-                out lastState);
+            if (UseStiffRos3LSolver)
+            {
+                dt = Math.Min(remaining, Math.Max(0.05, horizonMinutes / 20.0));
+                status = NativeReactorCoreInterop.StepSeriesParallelStiffDetailed(
+                    in parameters,
+                    ref ca,
+                    ref cb,
+                    ref cc,
+                    ref cd,
+                    ref temp,
+                    ref tempJ,
+                    dt,
+                    MaxSafeTemperatureKelvin,
+                    out lastState);
+            }
+            else
+            {
+                NativeReactorCoreInterop.SeriesParallelRates(in parameters, 1.0, 1.0, temp, out double k1, out double k2, out double k3);
+                double maxCharacteristicRate = Math.Max(k1 + k3, Math.Max(k2, invHydraulicAndThermalTau));
+                double safeDt = 0.25 / Math.Max(1e-3, maxCharacteristicRate);
+                dt = Math.Min(remaining, Math.Clamp(safeDt, 1e-5, maxMacroDt));
+
+                status = NativeReactorCoreInterop.StepSeriesParallelDetailed(
+                    in parameters,
+                    ref ca,
+                    ref cb,
+                    ref cc,
+                    ref cd,
+                    ref temp,
+                    ref tempJ,
+                    dt,
+                    MaxSafeTemperatureKelvin,
+                    out lastState);
+            }
 
             if (status != 0 || double.IsNaN(ca) || double.IsNaN(temp) || double.IsNaN(tempJ))
                 throw new InvalidOperationException($"Series-parallel CSTR integration failed on unit '{Id}' (status={status}).");

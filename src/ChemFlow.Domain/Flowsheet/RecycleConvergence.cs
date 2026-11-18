@@ -66,3 +66,53 @@ public sealed record FlowsheetSolveResult(
     IReadOnlyList<string> TearStreamIds,
     IReadOnlyList<TearStreamConvergenceRecord> ConvergenceHistory
 );
+
+/// <summary>
+/// Abstraction for closed-loop tear stream convergence accelerators (Direct, Wegstein, Broyden).
+/// </summary>
+public interface IRecycleAccelerator
+{
+    void Reset();
+    StreamStateVector Accelerate(string streamId, StreamStateVector guessX, StreamStateVector calculatedY, int iteration);
+    TearStreamConvergenceRecord CheckConvergence(string streamId, StreamStateVector guessX, StreamStateVector calculatedY, int iteration);
+}
+
+internal static class RecycleConvergenceHelper
+{
+    public static TearStreamConvergenceRecord EvaluateConvergence(
+        RecycleSolverOptions options,
+        string streamId,
+        StreamStateVector guessX,
+        StreamStateVector calculatedY,
+        int iteration)
+    {
+        double flowDelta = Math.Abs(calculatedY.MolarFlowRateMolPerSec - guessX.MolarFlowRateMolPerSec);
+        double flowScale = Math.Max(1.0, Math.Max(calculatedY.MolarFlowRateMolPerSec, guessX.MolarFlowRateMolPerSec));
+        double relFlowError = flowDelta / flowScale;
+
+        double tempDelta = Math.Abs(calculatedY.TemperatureKelvin - guessX.TemperatureKelvin);
+
+        double maxCompositionDelta = 0.0;
+        int n = Math.Min(guessX.CompositionZ.Length, calculatedY.CompositionZ.Length);
+        for (int i = 0; i < n; i++)
+        {
+            double dz = Math.Abs(calculatedY.CompositionZ[i] - guessX.CompositionZ[i]);
+            if (dz > maxCompositionDelta)
+                maxCompositionDelta = dz;
+        }
+
+        bool isConverged = relFlowError <= options.Tolerance
+                           && tempDelta <= Math.Max(0.02, options.Tolerance * 100.0)
+                           && maxCompositionDelta <= Math.Max(1e-4, options.Tolerance * 10.0);
+
+        return new TearStreamConvergenceRecord(
+            Iteration: iteration,
+            StreamId: streamId,
+            FlowErrorRelative: relFlowError,
+            FlowDeltaMolPerSec: flowDelta,
+            TemperatureDeltaKelvin: tempDelta,
+            MaxCompositionDelta: maxCompositionDelta,
+            IsConverged: isConverged
+        );
+    }
+}

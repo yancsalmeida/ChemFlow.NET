@@ -523,6 +523,23 @@
       <button class="btn-secondary" id="btnSimulateShortcut" style="width: 100%; margin-top: 0.5rem; border-color: #3b82f6; color: #93c5fd; background: rgba(59, 130, 246, 0.12);">Design Shortcut Distillation (FUG Shortcut)</button>
       <button class="btn-secondary" id="btnSimulateDistillation" style="width: 100%; margin-top: 0.5rem; border-color: #7c3aed; color: #c4b5fd; background: rgba(124, 58, 237, 0.12);">Solve Rigorous Distillation (Wang-Henke MESH)</button>
       <button class="btn-secondary" id="btnSimulateSeriesParallelPlant" style="width: 100%; margin-top: 0.5rem; border-color: #ec4899; color: #f9a8d4; background: rgba(236, 72, 153, 0.12);">Solve Series-Parallel CSTR Plant (A&rarr;B&rarr;C / A&rarr;D)</button>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; margin-top: 0.45rem;">
+        <select id="selSpSeparationMode" style="font-size: 0.72rem; padding: 0.35rem;">
+          <option value="Distillation" selected>Sep: FUG Distillation</option>
+          <option value="FlashDrum">Sep: VLE FlashDrum</option>
+        </select>
+        <select id="selSpRecycleMethod" style="font-size: 0.72rem; padding: 0.35rem;">
+          <option value="Wegstein" selected>Loop: Wegstein</option>
+          <option value="Broyden">Loop: Broyden QN</option>
+          <option value="Direct">Loop: Direct Sub</option>
+        </select>
+      </div>
+      <label style="display:flex; align-items:center; gap:0.45rem; font-size:0.75rem; color:#cbd5e1; margin-top:0.4rem; cursor:pointer;">
+        <input type="checkbox" id="chkSpUseRos3l" checked />
+        Use L-Stable ROS3L(2) Stiff CSTR Solver
+      </label>
+      <button class="btn-secondary" id="btnCompareSpPlant" style="width: 100%; margin-top: 0.4rem; border-color: #10b981; color: #6ee7b7; background: rgba(16, 185, 129, 0.12); font-size: 0.78rem;">Compare Single-Pass vs Recycle (Wegstein &amp; Broyden)</button>
+      <div id="spComparisonBanner" style="display:none; margin-top:0.5rem; padding:0.5rem; border-radius:6px; border:1px solid #10b98155; background:rgba(16,185,129,0.08); font-size:0.72rem; line-height:1.4; color:#d1fae5;"></div>
 
       <div class="panel-header" style="margin-top: 1.5rem;">
         <h2>Binary VLE T-x-y Diagram</h2>
@@ -1015,6 +1032,11 @@
       btnSimulateShortcut: document.getElementById('btnSimulateShortcut'),
       btnSimulateDistillation: document.getElementById('btnSimulateDistillation'),
       btnSimulateSeriesParallelPlant: document.getElementById('btnSimulateSeriesParallelPlant'),
+      selSpSeparationMode: document.getElementById('selSpSeparationMode'),
+      selSpRecycleMethod: document.getElementById('selSpRecycleMethod'),
+      chkSpUseRos3l: document.getElementById('chkSpUseRos3l'),
+      btnCompareSpPlant: document.getElementById('btnCompareSpPlant'),
+      spComparisonBanner: document.getElementById('spComparisonBanner'),
       streamTableBody: document.getElementById('streamTableBody'),
       kpiDuty: document.getElementById('kpiDuty'),
       kpiBeta: document.getElementById('kpiBeta'),
@@ -1477,6 +1499,9 @@
       const feedTemp = parseFloat(els.inpT1?.value || '345.0') || 345.0;
       const colPressure = parseFloat(els.inpPdrum?.value || '150.0') || 150.0;
       const jacketTemp = parseFloat(els.inpLiveTc?.value || '345.0') || 345.0;
+      const sepMode = els.selSpSeparationMode?.value || 'Distillation';
+      const loopMethod = els.selSpRecycleMethod?.value || 'Wegstein';
+      const useRos3l = !!els.chkSpUseRos3l?.checked;
 
       const payload = {
         freshFeedFlowMolPerSec: Math.max(4.0, Math.min(25.0, feedFlow * 0.25)),
@@ -1488,14 +1513,17 @@
         maxSafeTemperatureKelvin: 450.0,
         recycleFraction: 0.85,
         useHighExothermKinetics: false,
-        model: "Raoult",
-        method: "Wegstein",
-        tolerance: 1e-5
+        model: sepMode === 'FlashDrum' ? 'PengRobinson' : 'Raoult',
+        method: loopMethod,
+        tolerance: 1e-5,
+        useStiffRos3L: useRos3l,
+        separationMode: sepMode,
+        flashTemperatureKelvin: 360.0
       };
 
       try {
         if (els.dagOrderBadge) {
-          els.dagOrderBadge.textContent = 'Series-Parallel CSTR Plant: Converging Recycle + FUG Columns...';
+          els.dagOrderBadge.textContent = `Series-Parallel CSTR Plant (${sepMode} / ${loopMethod} / ${useRos3l ? 'ROS3L' : 'RK4'}): Converging...`;
           els.dagOrderBadge.style.color = '#f9a8d4';
         }
 
@@ -1512,10 +1540,10 @@
 
         if (els.distillationPanel) els.distillationPanel.style.display = 'none';
 
-        els.kpiDuty.textContent = `${data.reactorTemperatureCelsius.toFixed(1)}°C / Tj:${data.jacketOutletTemperatureCelsius.toFixed(1)}°C`;
+        els.kpiDuty.textContent = `${data.reactorTemperatureCelsius.toFixed(1)}°C / Margin: $${(data.netProfitUsdPerHour || 0).toFixed(0)}/h`;
         els.kpiBeta.textContent = `X_A:${data.singlePassConversionAPercent.toFixed(1)}% (Plant:${data.overallPlantConversionAPercent.toFixed(1)}%)`;
         els.kpiVaporY.textContent = `S_B:${data.selectivityBPercent.toFixed(1)}% | Y_B:${data.yieldBPercent.toFixed(1)}% | B:${(data.productBPurityMoleFraction * 100).toFixed(1)}%`;
-        els.dagOrderBadge.textContent = `R-101+C-101/C-102: ${data.recycleIterations} Wegstein iters (${data.isUsingNativeCore ? 'Native C11' : 'Managed'})`;
+        els.dagOrderBadge.textContent = `${data.separationMode} (${data.solverMode}): ${data.recycleIterations} ${loopMethod} iters (${data.isUsingNativeCore ? 'Native C11' : 'Managed'})`;
         els.dagOrderBadge.style.color = '#f9a8d4';
 
         const [topologyRes, reportRes] = await Promise.all([
@@ -1538,6 +1566,54 @@
           els.dagOrderBadge.textContent = `Series-Parallel Plant Error: ${err.message}`;
           els.dagOrderBadge.style.color = '#fb7185';
         }
+      }
+    }
+
+    async function runSeriesParallelPlantComparison() {
+      const feedFlow = parseFloat(els.inpF1?.value || '48.0') || 48.0;
+      const feedTemp = parseFloat(els.inpT1?.value || '345.0') || 345.0;
+      const colPressure = parseFloat(els.inpPdrum?.value || '150.0') || 150.0;
+      const jacketTemp = parseFloat(els.inpLiveTc?.value || '345.0') || 345.0;
+      const sepMode = els.selSpSeparationMode?.value || 'Distillation';
+      const useRos3l = !!els.chkSpUseRos3l?.checked;
+
+      const payload = {
+        freshFeedFlowMolPerSec: Math.max(4.0, Math.min(25.0, feedFlow * 0.25)),
+        freshFeedTemperatureKelvin: Math.max(300.0, Math.min(365.0, feedTemp)),
+        columnPressureKpa: Math.max(80.0, colPressure),
+        reactorVolumeLiters: 110.0,
+        coolingUaWattsPerKelvin: 4000.0,
+        jacketInletTemperatureKelvin: Math.max(295.0, Math.min(350.0, jacketTemp)),
+        maxSafeTemperatureKelvin: 450.0,
+        recycleFraction: 0.85,
+        useHighExothermKinetics: false,
+        model: sepMode === 'FlashDrum' ? 'PengRobinson' : 'Raoult',
+        method: 'Wegstein',
+        tolerance: 1e-5,
+        useStiffRos3L: useRos3l,
+        separationMode: sepMode,
+        flashTemperatureKelvin: 360.0
+      };
+
+      try {
+        const res = await fetch('/api/simulations/series-parallel-plant/compare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const cmp = await res.json();
+        if (!res.ok) throw new Error(cmp?.detail || 'Comparison failed');
+
+        if (els.spComparisonBanner) {
+          els.spComparisonBanner.style.display = 'block';
+          els.spComparisonBanner.innerHTML =
+            `<strong>${cmp.separationMode} (${cmp.solverMode} / ${cmp.thermodynamicModel})</strong><br/>` +
+            `Single-Pass: X<sub>A</sub>=${cmp.singlePassCase.overallPlantConversionAPercent.toFixed(1)}% | B=${cmp.singlePassCase.purifiedBenzeneFlowMolPerSec.toFixed(2)} mol/s | $${cmp.singlePassCase.netProfitUsdPerHour.toFixed(0)}/h<br/>` +
+            `Wegstein (${cmp.wegsteinRecycleCase.iterations} iters): X<sub>A</sub>=${cmp.wegsteinRecycleCase.overallPlantConversionAPercent.toFixed(1)}% (+${cmp.conversionGainPercentagePoints.toFixed(1)} pp) | $${cmp.wegsteinRecycleCase.netProfitUsdPerHour.toFixed(0)}/h<br/>` +
+            `Broyden QN (${cmp.broydenRecycleCase.iterations} iters): X<sub>A</sub>=${cmp.broydenRecycleCase.overallPlantConversionAPercent.toFixed(1)}% | B gain: +${cmp.benzeneFlowGainPercent.toFixed(1)}% | +$${cmp.hourlyProfitGainUsdPerHour.toFixed(0)}/h`;
+        }
+      } catch (err) {
+        console.error('Plant comparison failed:', err);
       }
     }
 
@@ -3128,6 +3204,7 @@
     if (els.btnSimulateShortcut) els.btnSimulateShortcut.addEventListener('click', runShortcutSimulation);
     els.btnSimulateDistillation.addEventListener('click', runDistillationSimulation);
     if (els.btnSimulateSeriesParallelPlant) els.btnSimulateSeriesParallelPlant.addEventListener('click', runSeriesParallelPlantSimulation);
+    if (els.btnCompareSpPlant) els.btnCompareSpPlant.addEventListener('click', runSeriesParallelPlantComparison);
 
     if (els.btnDistillPlotBoth) els.btnDistillPlotBoth.addEventListener('click', () => setDistillPlotMode('both', els.btnDistillPlotBoth));
     if (els.btnDistillPlotTemp) els.btnDistillPlotTemp.addEventListener('click', () => setDistillPlotMode('temp', els.btnDistillPlotTemp));

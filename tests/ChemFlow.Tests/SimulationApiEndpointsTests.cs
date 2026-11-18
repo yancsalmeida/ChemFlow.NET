@@ -495,6 +495,50 @@ public class SimulationApiEndpointsTests : IClassFixture<WebApplicationFactory<P
         Assert.Contains("chemflow_sil_running", metricsBody);
         Assert.Contains("chemflow_historian_outbox_queued", metricsBody);
     }
+
+    [Fact]
+    public async Task SeriesParallelPlant_CompareAndFlashDrumRos3LEndpoints_ReturnEconomicGainsAndUiControls()
+    {
+        var flashRequest = new SeriesParallelPlantSimulationRequest(
+            UseStiffRos3L: true,
+            SeparationMode: "FlashDrum",
+            Model: "PengRobinson",
+            Method: "Broyden",
+            FlashTemperatureKelvin: 360.0);
+
+        HttpResponseMessage flashResp = await _client.PostAsJsonAsync(
+            "/api/simulations/series-parallel-plant", flashRequest);
+        Assert.Equal(HttpStatusCode.OK, flashResp.StatusCode);
+
+        SeriesParallelPlantSimulationResponse? flashSim =
+            await flashResp.Content.ReadFromJsonAsync<SeriesParallelPlantSimulationResponse>();
+        Assert.NotNull(flashSim);
+        Assert.Equal("FlashDrum", flashSim.SeparationMode);
+        Assert.Equal("ROS3L", flashSim.SolverMode);
+        Assert.True(flashSim.IsMassConserved);
+        Assert.True(flashSim.IsEnergyConserved);
+        Assert.NotNull(flashSim.ConvergenceTrace);
+        Assert.NotEmpty(flashSim.ConvergenceTrace);
+
+        HttpResponseMessage cmpResp = await _client.PostAsJsonAsync(
+            "/api/simulations/series-parallel-plant/compare",
+            new SeriesParallelPlantSimulationRequest(UseStiffRos3L: true, SeparationMode: "Distillation"));
+        Assert.Equal(HttpStatusCode.OK, cmpResp.StatusCode);
+
+        SeriesParallelPlantComparisonResponse? cmp =
+            await cmpResp.Content.ReadFromJsonAsync<SeriesParallelPlantComparisonResponse>();
+        Assert.NotNull(cmp);
+        Assert.True(cmp.WegsteinRecycleCase.IsConverged);
+        Assert.True(cmp.BroydenRecycleCase.IsConverged);
+        Assert.True(cmp.ConversionGainPercentagePoints > 0.0);
+        Assert.True(cmp.BenzeneFlowGainPercent > 0.0);
+        Assert.True(cmp.HourlyProfitGainUsdPerHour > 0.0);
+        Assert.NotEmpty(cmp.BroydenRecycleCase.ConvergenceTrace);
+
+        string html = await _client.GetStringAsync("/");
+        Assert.Contains("selSpSeparationMode", html);
+        Assert.Contains("btnCompareSpPlant", html);
+    }
 }
 
 

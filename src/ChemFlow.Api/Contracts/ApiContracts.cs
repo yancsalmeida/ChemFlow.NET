@@ -316,7 +316,19 @@ public sealed record SeriesParallelPlantSimulationRequest(
     [property: DefaultValue(false)] bool UseHighExothermKinetics = false,
     [property: DefaultValue("Raoult")] string? Model = "Raoult",
     [property: DefaultValue("Wegstein")] string Method = "Wegstein",
-    [property: DefaultValue(1e-5)] double Tolerance = 1e-5
+    [property: DefaultValue(1e-5)] double Tolerance = 1e-5,
+    [property: DefaultValue(false)] bool UseStiffRos3L = false,
+    [property: DefaultValue("Distillation")] string SeparationMode = "Distillation",
+    [property: DefaultValue(360.0)] double FlashTemperatureKelvin = 360.0
+);
+
+public sealed record TearStreamConvergenceStepDto(
+    int Iteration,
+    string StreamId,
+    double FlowErrorRelative,
+    double TemperatureDeltaKelvin,
+    double MaxCompositionDelta,
+    bool IsConverged
 );
 
 public sealed record SeriesParallelPlantSimulationResponse(
@@ -352,7 +364,42 @@ public sealed record SeriesParallelPlantSimulationResponse(
     bool IsThermalRunaway,
     bool IsUsingNativeCore,
     double ProductBPurityMoleFraction,
-    double PurifiedBenzeneFlowMolPerSec
+    double PurifiedBenzeneFlowMolPerSec,
+    string SolverMode = "RK4",
+    string SeparationMode = "Distillation",
+    double NetProfitUsdPerHour = 0.0,
+    double SpecificCoolingDutyKwPerMolB = 0.0,
+    IReadOnlyList<TearStreamConvergenceStepDto>? ConvergenceTrace = null
+);
+
+public sealed record SeriesParallelPlantCaseComparisonDto(
+    string CaseName,
+    string Method,
+    bool IsConverged,
+    int Iterations,
+    double OverallPlantConversionAPercent,
+    double SinglePassConversionAPercent,
+    double YieldBPercent,
+    double SelectivityBPercent,
+    double PurifiedBenzeneFlowMolPerSec,
+    double ProductBPurityMoleFraction,
+    double NetProfitUsdPerHour,
+    double SpecificCoolingDutyKwPerMolB,
+    bool IsMassConserved,
+    bool IsEnergyConserved,
+    IReadOnlyList<TearStreamConvergenceStepDto> ConvergenceTrace
+);
+
+public sealed record SeriesParallelPlantComparisonResponse(
+    string SeparationMode,
+    string SolverMode,
+    string ThermodynamicModel,
+    SeriesParallelPlantCaseComparisonDto SinglePassCase,
+    SeriesParallelPlantCaseComparisonDto WegsteinRecycleCase,
+    SeriesParallelPlantCaseComparisonDto BroydenRecycleCase,
+    double ConversionGainPercentagePoints,
+    double BenzeneFlowGainPercent,
+    double HourlyProfitGainUsdPerHour
 );
 
 public sealed record SeriesParallelStreamRequest(

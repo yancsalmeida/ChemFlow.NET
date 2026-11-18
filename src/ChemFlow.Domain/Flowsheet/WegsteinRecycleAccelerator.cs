@@ -57,7 +57,7 @@ public sealed record StreamStateVector(
 /// Implements the Wegstein Bounded Secant Convergence Acceleration algorithm,
 /// the chemical engineering gold standard for solving closed-loop process recycles.
 /// </summary>
-public sealed class WegsteinRecycleAccelerator
+public sealed class WegsteinRecycleAccelerator : IRecycleAccelerator
 {
     private readonly RecycleSolverOptions _options;
     private readonly Dictionary<string, (StreamStateVector Guess, StreamStateVector Calculated)> _history = new(StringComparer.OrdinalIgnoreCase);
@@ -180,35 +180,6 @@ public sealed class WegsteinRecycleAccelerator
     /// <summary>
     /// Checks convergence between guess state x and calculated state y.
     /// </summary>
-    public TearStreamConvergenceRecord CheckConvergence(string streamId, StreamStateVector guessX, StreamStateVector calculatedY, int iteration)
-    {
-        double flowDelta = Math.Abs(calculatedY.MolarFlowRateMolPerSec - guessX.MolarFlowRateMolPerSec);
-        double flowScale = Math.Max(1.0, Math.Max(calculatedY.MolarFlowRateMolPerSec, guessX.MolarFlowRateMolPerSec));
-        double relFlowError = flowDelta / flowScale;
-
-        double tempDelta = Math.Abs(calculatedY.TemperatureKelvin - guessX.TemperatureKelvin);
-
-        double maxCompositionDelta = 0.0;
-        int n = Math.Min(guessX.CompositionZ.Length, calculatedY.CompositionZ.Length);
-        for (int i = 0; i < n; i++)
-        {
-            double dz = Math.Abs(calculatedY.CompositionZ[i] - guessX.CompositionZ[i]);
-            if (dz > maxCompositionDelta)
-                maxCompositionDelta = dz;
-        }
-
-        bool isConverged = relFlowError <= _options.Tolerance
-                           && tempDelta <= Math.Max(0.02, _options.Tolerance * 100.0)
-                           && maxCompositionDelta <= Math.Max(1e-4, _options.Tolerance * 10.0);
-
-        return new TearStreamConvergenceRecord(
-            Iteration: iteration,
-            StreamId: streamId,
-            FlowErrorRelative: relFlowError,
-            FlowDeltaMolPerSec: flowDelta,
-            TemperatureDeltaKelvin: tempDelta,
-            MaxCompositionDelta: maxCompositionDelta,
-            IsConverged: isConverged
-        );
-    }
+    public TearStreamConvergenceRecord CheckConvergence(string streamId, StreamStateVector guessX, StreamStateVector calculatedY, int iteration) =>
+        RecycleConvergenceHelper.EvaluateConvergence(_options, streamId, guessX, calculatedY, iteration);
 }
